@@ -352,7 +352,6 @@ def draw():
 
 def draw_hud():
     hud.clear()
-    hud.textFont("monospace")
     hud.fill(120, 240, 255)
     hud.textSize(18)
     hud.text("DISTANCIA: %d m" % int(score), 16, 28)
@@ -362,7 +361,7 @@ def draw_hud():
     if state == "start":
         _center_msg("TRENCH RUN INFINITO",
                     "Desvie das formas que mudam",
-                    "ESPACO para comecar  -  SETAS/WASD para mover")
+                    "SETAS / WASD para mover (comeca ao mover)")
     elif state == "over":
         _center_msg("VOCE COLIDIU",
                     "Distancia: %d m" % int(score),
@@ -386,7 +385,12 @@ def _center_msg(title, line2, line3):
 
 def handle_space():
     global prev_space
-    down = P5.keyIsDown(32)
+    # comeca/reinicia com ESPACO ou qualquer tecla de movimento
+    down = (P5.keyIsDown(32)
+            or P5.keyIsDown(P5.LEFT_ARROW) or P5.keyIsDown(65)
+            or P5.keyIsDown(P5.RIGHT_ARROW) or P5.keyIsDown(68)
+            or P5.keyIsDown(P5.UP_ARROW) or P5.keyIsDown(87)
+            or P5.keyIsDown(P5.DOWN_ARROW) or P5.keyIsDown(83))
     if down and not prev_space:
         if state in ("start", "over"):
             reset_game()
