@@ -31,6 +31,7 @@ MAX_OBS      = 8        # tambem definido como #define no shader
 TUNNEL_HALF  = 6.0      # meia-largura do tunel quadrado
 SHIP_RADIUS  = 0.55     # "raio" de colisao da nave
 SPACING      = 16.0     # distancia entre obstaculos ao longo de Z
+OB_START     = 28.0     # Z do primeiro obstaculo (nunca em cima da camera)
 RIDGE_MOD    = 64.0     # para manter camZ pequeno preservando a fase visual
 
 # ---------------------------------------------------------------------------
@@ -222,7 +223,7 @@ def make_obstacle(n):
     cx = rng.uniform(-lim, lim)
     cy = rng.uniform(-lim, lim)
     typ = rng.uniform(0.0, 6.28)
-    return n * SPACING, cx, cy, rad, typ   # z, cx, cy, rad, typ
+    return OB_START + n * SPACING, cx, cy, rad, typ   # z, cx, cy, rad, typ
 
 
 def reset_game():
@@ -268,8 +269,10 @@ def update(dt):
     score = cam_z
 
     # colisao com obstaculos proximos
-    first = int(cam_z // SPACING) - 1
-    for n in range(first, first + MAX_OBS + 1):
+    base = int((cam_z - OB_START) // SPACING)
+    for n in range(base - 1, base + MAX_OBS + 1):
+        if n < 0:
+            continue
         z, cx, cy, rad, _ = make_obstacle(n)
         relz = z - cam_z
         if -rad < relz < rad:
@@ -292,17 +295,17 @@ def _set_player(x, y):
 
 def collect_obstacles():
     """Monta os arrays de uniforms (relativos a camera, padded ate MAX_OBS)."""
-    first = int(cam_z // SPACING)
+    base = int((cam_z - OB_START) // SPACING)
     rel = []
     rads = []
     types = []
     count = 0
-    n = first
-    while count < MAX_OBS and n < first + MAX_OBS + 2:
+    n = max(0, base - 1)
+    while count < MAX_OBS and n < base + MAX_OBS + 2:
         z, cx, cy, rad, typ = make_obstacle(n)
         relz = z - cam_z
         n += 1
-        if relz < -4.0 or relz > 150.0:
+        if relz < -1.0 or relz > 150.0:
             continue
         rel.extend([cx - px, cy - py, relz])
         rads.append(rad)
