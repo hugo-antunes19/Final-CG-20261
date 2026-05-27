@@ -78,12 +78,11 @@ float sdTorus(vec3 p, vec2 t){
 mat2 rot(float a){ float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
 
 // Obstaculo que muda de forma: mistura esfera <-> cubo <-> toro no tempo
-float obstacleSDF(vec3 p, int i){
-  vec3 rp = p - uObRel[i];
-  float ph = uObType[i] + uTime * 0.6;     // fase de animacao por obstaculo
+float obstacleSDF(vec3 p, vec3 center, float r, float typ){
+  vec3 rp = p - center;
+  float ph = typ + uTime * 0.6;             // fase de animacao por obstaculo
   rp.xy = rot(ph * 0.7) * rp.xy;            // rotaciona p/ dar vida
   rp.xz = rot(ph * 0.5) * rp.xz;
-  float r = uObRad[i];
 
   float es = sdSphere(rp, r);
   float cu = sdBox(rp, vec3(r * 0.78));
@@ -108,7 +107,7 @@ float mapScene(vec3 p, out float mat){
   mat = 0.0;
   for(int i = 0; i < MAX_OBS; i++){
     if(i >= uObCount) break;
-    float od = obstacleSDF(p, i);
+    float od = obstacleSDF(p, uObRel[i], uObRad[i], uObType[i]);
     if(od < d){ d = od; mat = 1.0; }
   }
   return d;
