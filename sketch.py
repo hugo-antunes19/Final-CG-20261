@@ -206,7 +206,6 @@ def draw():
     prog.setUniform("uResolution", _to_js([float(W), float(H)]))
     prog.setUniform("uTime", float(P5.millis()) / 1000.0)
     prog.setUniform("uWarp", float(warp))
-    prog.setUniform("uObCount", int(count))
     prog.setUniform("uObRel", _to_js([float(v) for v in rel]))
     prog.setUniform("uObRad", _to_js([float(v) for v in rads]))
     prog.setUniform("uObType", _to_js([float(v) for v in types]))

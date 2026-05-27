@@ -14,7 +14,6 @@ precision highp float;
 uniform vec2  uResolution;
 uniform float uTime;
 uniform float uWarp;           // fase continua [0,1) do campo de estrelas
-uniform int   uObCount;
 uniform vec3  uObRel[MAX_OBS]; // posicao do obstaculo relativa a camera
 uniform float uObRad[MAX_OBS];
 uniform float uObType[MAX_OBS];
@@ -50,16 +49,17 @@ float obstacleSDF(vec3 p, vec3 center, float r, float typ){
   return mix(m, to, b);
 }
 
-// SDF da cena: o obstaculo mais proximo (mat=1 quando e um obstaculo)
+// SDF da cena: o obstaculo mais proximo. O loop e desenrolado com indices
+// CONSTANTES porque indexar array de uniform com indice dinamico nao e
+// suportado de forma confiavel em GLSL ES 1.00 (quebra em varios drivers).
+// Obstaculos nao usados vem com raio 0 e z=9999, logo nunca entram na cena.
+// A cena so tem obstaculos, entao mat=1 (so lido quando ha colisao do raio).
+#define OBS(i) ob = min(ob, obstacleSDF(p, uObRel[i], uObRad[i], uObType[i]))
 float mapScene(vec3 p, out float mat){
-  float d = 1e9;
-  mat = 0.0;
-  for(int i = 0; i < MAX_OBS; i++){
-    if(i >= uObCount) break;
-    float od = obstacleSDF(p, uObRel[i], uObRad[i], uObType[i]);
-    if(od < d){ d = od; mat = 1.0; }
-  }
-  return d;
+  mat = 1.0;
+  float ob = obstacleSDF(p, uObRel[0], uObRad[0], uObType[0]);
+  OBS(1); OBS(2); OBS(3); OBS(4); OBS(5); OBS(6); OBS(7);
+  return ob;
 }
 float mapDist(vec3 p){ float m; return mapScene(p, m); }
 
