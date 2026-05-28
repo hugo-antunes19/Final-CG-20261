@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Túnel Espacial Infinito</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #020408;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+
+    #sketch-wrap { position: relative; }
+
+    #loading {
+      position: fixed;
+      inset: 0;
+      background: #020408;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      align-items: center;
+      justify-content: center;
+      color: #7fe0ff;
+      font-family: monospace;
+      z-index: 100;
+      padding: 24px;
+      text-align: center;
+    }
+
+    #loading h1 { font-size: 26px; color: #ffe070; letter-spacing: 2px; }
+
+    #loading-status {
+      font-size: 13px;
+      color: #7fe0ff;
+      white-space: pre-wrap;
+      max-width: 640px;
+    }
+
+    #loading-status.erro { color: #ff7060; text-align: left; font-size: 12px; }
+    #loading-dot { font-size: 13px; animation: blink 1s step-start infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+  </style>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+  <link  rel="stylesheet" href="https://pyscript.net/releases/2024.1.1/core.css">
+  <script type="module" src="https://pyscript.net/releases/2024.1.1/core.js"></script>
+</head>
+<body>
+
+  <div id="loading">
+    <h1>TÚNEL ESPACIAL INFINITO</h1>
+    <div id="loading-status">Aguardando Python (Pyodide)…</div>
+    <div id="loading-dot">●</div>
+  </div>
+
+  <div id="sketch-wrap"></div>
+
+  <script>
+    window.js_array = function(pyObj) {
+      return new Float32Array(Array.from(pyObj));
+    };
+
+    window.setStatus = function(msg, isError) {
+      const el = document.getElementById('loading-status');
+      el.textContent = msg;
+      if (isError) {
+        el.classList.add('erro');
+        document.getElementById('loading-dot').style.display = 'none';
+      }
+    };
+
+    let _pySetup = null;
+    let _pyDraw  = null;
+    let _preloadedShader = null;
+
+    window.registerSketch = function(setupFn, drawFn) {
+      _pySetup = setupFn;
+      _pyDraw  = drawFn;
+    };
+
+    new p5(function(p) {
+      window.P5 = p;
+
+      // preload() é o lugar correto do p5 para carregar shaders:
+      // o p5 bloqueia o setup() até todos os assets do preload terminarem.
+      p.preload = function() {
+        _preloadedShader = p.loadShader('raymarch.vert', 'raymarch.frag');
+      };
+
+      p.setup = async function() {
+        // Quando setup() é chamado, _preloadedShader já está compilado.
+        window.setStatus('Shaders prontos. Aguardando Python…');
+
+        while (!_pySetup) {
+          await new Promise(r => setTimeout(r, 30));
+        }
+
+        // Intercepta P5.loadShader para que o setup() do Python receba o
+        // shader já carregado pelo preload, e o callback _on_shader_loaded
+        // seja chamado imediatamente.
+        const _origLoad = p.loadShader.bind(p);
+        p.loadShader = function(v, f, successCb, errorCb) {
+          if (successCb) setTimeout(() => { try { successCb(_preloadedShader); } catch(e) { console.error('[shader cb]', e); } }, 0);
+          return _preloadedShader;
+        };
+
+        try {
+          _pySetup();
+          document.getElementById('loading').style.display = 'none';
+        } catch(e) {
+          console.error('[setup error]', e);
+          window.setStatus('Erro em setup():\n' + (e.message || String(e)), true);
+        } finally {
+          p.loadShader = _origLoad;
+        }
+      };
+
+      p.draw = function() {
+        if (_pyDraw) _pyDraw();
+      };
+
+    }, 'sketch-wrap');
+
+    setTimeout(function() {
+      if (!_pySetup) {
+        window.setStatus(
+          'Timeout (60s): Python ainda não inicializou.\n\n' +
+          'Verifique:\n' +
+          '  • F12 → Console para erros\n' +
+          '  • Acesso via http://localhost:8000\n' +
+          '  • Conexão com a internet (PyScript baixa ~15 MB)',
+          true
+        );
+      }
+    }, 60000);
+  </script>
+
+  <script type="py">
+import traceback
+from js import window, document
+
+def _status(msg):
+    document.getElementById('loading-status').textContent = msg
+
+_status("Python pronto. Carregando sketch.py…")
+
+try:
+    from pyodide.http import open_url
+    from pyodide.ffi import create_proxy
+
+    g = globals()
+    g['P5'] = window.P5
+
+    try:
+        from js import js_array
+        g['js_array'] = js_array
+    except Exception:
+        pass
+
+    _status("Executando sketch.py…")
+    code = open_url('sketch.py').read()
+    exec(code, g)
+
+    # Envolve callbacks com create_proxy para que o Pyodide não os descarte
+    # antes de o JavaScript chamá-los de forma assíncrona.
+    for name in ('_on_shader_loaded', '_on_shader_error'):
+        if name in g:
+            g[name] = create_proxy(g[name])
+
+    _status("Registrando callbacks…")
+    window.registerSketch(create_proxy(g['setup']), create_proxy(g['draw']))
+
+except Exception:
+    err = traceback.format_exc()
+    el = document.getElementById('loading-status')
+    el.textContent = "ERRO Python:\n\n" + err
+    el.classList.add('erro')
+    document.getElementById('loading-dot').style.display = 'none'
+  </script>
+
+</body>
+</html>
