@@ -26,11 +26,12 @@ TUNNEL_RADIUS    = 220.0
 SHIP_RADIUS_F1   = 18.0
 SPEED_F1         = 3.5
 MOVE_SPEED_F1    = 6.0
+FWD_SPEED_F1  = 5.5
 
-CILIO_SPACING    = 120.0
-CILIOS_PER_RING  = 6
-CILIO_LEN        = 110.0
-CILIO_RADIUS_COL = 14.0
+# CILIO_SPACING    = 120.0
+# CILIOS_PER_RING  = 6
+# CILIO_LEN        = 110.0
+# CILIO_RADIUS_COL = 14.0
 
 CELL_SPACING     = 250.0
 CELL_RADIUS      = 22.0
@@ -39,6 +40,20 @@ CELL_COL_DIST    = SHIP_RADIUS_F1 + CELL_RADIUS
 PONTOS_PARA_FASE2 = 5
 VIEW_DIST        = 1200.0
 SEED             = 42
+
+# ---------------------------------------------------------------------------
+#  Constantes cílio — substitua as existentes
+# ---------------------------------------------------------------------------
+CILIO_SPACING    = 120.0
+CILIOS_PER_RING  = 4
+CILIO_LEN        = 110.0
+CILIO_RADIUS_COL = 14.0
+
+WHIP_SEGS  = 4
+WHIP_STIFF = 0.35
+WHIP_DAMP  = 0.87
+WHIP_FORCE = 0.5
+WHIP_FREQ  = 1.2
 
 # ---------------------------------------------------------------------------
 #  Constantes Fase 2
@@ -209,6 +224,174 @@ void main(){
 """
 FRAG = FRAG.replace("TUNNEL_HALF", "%.1f" % TUNNEL_HALF)
 
+
+# ---------------------------------------------------------------------------
+#  Cache global — adicione junto com os outros estados globais
+# ---------------------------------------------------------------------------
+cilio_cache = {}   # (ring, ci) → (base_z, angle, length, phase)
+cilio_nodes = {}   # (ring, ci) → lista de dicts de nós com física
+
+# ---------------------------------------------------------------------------
+#  get_cilio — substitui make_cilio, nunca recria o que já existe
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+#  get_cilio — com distribuição em espiral
+# ---------------------------------------------------------------------------
+def get_cilio(ring_index, cilio_index):
+    key = (ring_index, cilio_index)
+    if key not in cilio_cache:
+        rng    = random.Random((ring_index * 997 + cilio_index * 31 + SEED) & 0xFFFFFFFF)
+        base_z = ring_index * CILIO_SPACING
+        
+        # --- O SEGREDO DO ESPAÇAMENTO ESPIRAL ---
+        # Multiplicamos o número do aro por 30 graus (convertidos para radianos)
+        # Aro 0 = 0°, Aro 1 = 30°, Aro 2 = 60°, etc...
+        offset_anel = ring_index * math.radians(30)
+        
+        # O ângulo final é: A posição base (0, 90, 180...) + O giro do anel + Uma leve aleatoriedade natural
+        angle  = (cilio_index / CILIOS_PER_RING) * math.tau + offset_anel + rng.uniform(-0.15, 0.15)
+        
+        length = rng.uniform(CILIO_LEN * 0.5, CILIO_LEN)
+        phase  = rng.uniform(0, math.tau)
+        cilio_cache[key] = (base_z, angle, length, phase)
+    return cilio_cache[key]
+
+# ---------------------------------------------------------------------------
+#  init_cilio_nodes — cria a cadeia de física na primeira vez
+# ---------------------------------------------------------------------------
+def init_cilio_nodes(key, bx, by, bz, inx, iny, length):
+    seg = length / WHIP_SEGS
+    nodes = []
+    for i in range(WHIP_SEGS + 1):
+        nodes.append({
+            'x':  bx + inx * seg * i,
+            'y':  by + iny * seg * i,
+            'vx': 0.0,
+            'vy': 0.0,
+            # rest_x/rest_y: posição de repouso ABSOLUTA do nó i
+            'rx': bx + inx * seg * i,
+            'ry': by + iny * seg * i,
+        })
+    cilio_nodes[key] = nodes
+
+# ---------------------------------------------------------------------------
+#  update_cilio_nodes — física de chicote, chamada 1x por frame por cílio
+# ---------------------------------------------------------------------------
+def update_cilio_nodes(key, bx, by, inx, iny, phase, t, dt):
+    nodes = cilio_nodes[key]
+
+    # Raiz sempre na parede — nunca se move
+    nodes[0]['x'] = bx
+    nodes[0]['y'] = by
+
+    # Direção perpendicular ao eixo radial (plano XY)
+    perp_x = -iny
+    perp_y =  inx
+
+    SUBSTEPS = 4
+    sdt = dt / SUBSTEPS
+
+    for _ in range(SUBSTEPS):
+        for i in range(1, WHIP_SEGS + 1):
+            n  = nodes[i]
+            np = nodes[i - 1]
+
+            # Mola: puxa de volta para posição de repouso relativa ao nó anterior
+            # repouso relativo = nó i de repouso - nó i-1 de repouso
+            rest_rel_x = nodes[i]['rx'] - nodes[i-1]['rx']
+            rest_rel_y = nodes[i]['ry'] - nodes[i-1]['ry']
+
+            target_x = np['x'] + rest_rel_x
+            target_y = np['y'] + rest_rel_y
+
+            dx = n['x'] - target_x
+            dy = n['y'] - target_y
+
+            # Força oscilatória cresce linearmente da base à ponta
+            amp = WHIP_FORCE * (i / WHIP_SEGS)
+            fx = -dx * WHIP_STIFF + perp_x * amp * math.sin(t * WHIP_FREQ       + phase + i * 0.5)
+            fy = -dy * WHIP_STIFF + perp_y * amp * math.sin(t * WHIP_FREQ * 0.8 + phase + i * 0.4)
+
+            n['vx'] = (n['vx'] + fx * sdt) * WHIP_DAMP
+            n['vy'] = (n['vy'] + fy * sdt) * WHIP_DAMP
+            n['x'] += n['vx']
+            n['y'] += n['vy']
+
+# ---------------------------------------------------------------------------
+#  collect_visible_cilios — agora usa get_cilio (sem recriar)
+# ---------------------------------------------------------------------------
+def collect_visible_cilios():
+    z0 = cam_z_f1 - 50.0
+    z1 = cam_z_f1 + VIEW_DIST
+    r0 = max(0, int(z0 // CILIO_SPACING))
+    r1 = int(z1 // CILIO_SPACING) + 1
+    return [
+        ((ri, ci), *get_cilio(ri, ci))
+        for ri in range(r0, r1)
+        for ci in range(CILIOS_PER_RING)
+    ]
+
+# ---------------------------------------------------------------------------
+#  draw_cilio — substitui a versão antiga inteira
+# ---------------------------------------------------------------------------
+def draw_cilio(key, base_z, angle, length, phase, t, dt):
+    # 1. Posição da base na parede do túnel
+    bx  = math.cos(angle) * TUNNEL_RADIUS
+    by  = math.sin(angle) * TUNNEL_RADIUS
+    
+    # 2. Vetores de Direção
+    # Vetor apontando para o centro (crescimento normal do cílio)
+    inx = -math.cos(angle)
+    iny = -math.sin(angle)
+    # Vetor perpendicular (para fazer o cílio balançar de um lado para o outro)
+    perp_x = -iny
+    perp_y = inx
+
+    # 3. A Mágica do Chicote: Atraso de Fase (Phase Delay)
+    freq = 1.2 # Velocidade do chicote
+    
+    # Base (P0) - Fixa na parede
+    p0x, p0y, p0z = bx, by, base_z
+    
+    # Ponto de Controle 1 (P1) - 1/3 do tamanho, balança um pouco
+    sway1 = math.sin(t * freq + phase) * (length * 0.3)
+    p1x = bx + inx * (length * 0.33) + perp_x * sway1
+    p1y = by + iny * (length * 0.33) + perp_y * sway1
+    p1z = base_z
+    
+    # Ponto de Controle 2 (P2) - 2/3 do tamanho. 
+    # NOTE O "- 1.0" NO SENO: Ele faz o movimento atrasado em relação ao P1!
+    sway2 = math.sin(t * freq + phase - 1.0) * (length * 0.5)
+    p2x = bx + inx * (length * 0.66) + perp_x * sway2
+    p2y = by + iny * (length * 0.66) + perp_y * sway2
+    p2z = base_z
+    
+    # Ponta (P3) - Final do cílio. 
+    # NOTE O "- 2.0": A ponta é a última a receber a onda do chicote!
+    sway3 = math.sin(t * freq + phase - 2.0) * (length * 0.8)
+    p3x = bx + inx * length + perp_x * sway3
+    p3y = by + iny * length + perp_y * sway3
+    p3z = base_z
+
+    # 4. Renderização da Curva
+    pulse = 0.6 + 0.4 * math.sin(t * 2.2 + phase)
+    v = int(30 + pulse * 60)
+    P5.stroke(v, v, v, 210)
+    P5.strokeWeight(3.5)
+    P5.noFill()
+
+    P5.beginShape()
+    P5.vertex(p0x, p0y, p0z)
+    P5.bezierVertex(p1x, p1y, p1z, p2x, p2y, p2z, p3x, p3y, p3z)
+    P5.endShape()
+
+    # 5. Colisão (Checa se o vírus bateu na ponta do chicote)
+    dz  = base_z - cam_z_f1
+    if abs(dz) < CILIO_RADIUS_COL + SHIP_RADIUS_F1:
+        if math.hypot(p3x - px_f1, p3y - py_f1) < CILIO_RADIUS_COL + SHIP_RADIUS_F1:
+            return True
+    return False
+
 # ---------------------------------------------------------------------------
 #  Estado global
 # ---------------------------------------------------------------------------
@@ -248,29 +431,22 @@ def make_cilio(ring_index, cilio_index):
     phase  = rng.uniform(0, math.tau)
     return base_z, angle, length, phase
 
-# def make_cell(cell_index):
-#     rng = random.Random((cell_index * 1234567 + SEED) & 0xFFFFFFFF)
-#     z   = CELL_SPACING + cell_index * CELL_SPACING
-#     r   = rng.uniform(0, TUNNEL_RADIUS * 0.55)
-#     a   = rng.uniform(0, math.tau)
-#     return z, r * math.cos(a), r * math.sin(a)
-
 def make_cell(cell_index):
     rng = random.Random((cell_index * 1234567 + SEED) & 0xFFFFFFFF)
     z   = CELL_SPACING + cell_index * CELL_SPACING
     
-    # Raio do sorteio alterado: de 20% a 70% da borda do túnel
+    # Raio do sorteio de 20% a 70% da borda do túnel
     r   = rng.uniform(TUNNEL_RADIUS * 0.20, TUNNEL_RADIUS * 0.70)
     a   = rng.uniform(0, math.tau)
     
     return z, r * math.cos(a), r * math.sin(a)
 
-def collect_visible_cilios():
-    z0 = cam_z_f1 - 50.0
-    z1 = cam_z_f1 + VIEW_DIST
-    r0 = max(0, int(z0 // CILIO_SPACING))
-    r1 = int(z1 // CILIO_SPACING) + 1
-    return [make_cilio(ri, ci) for ri in range(r0, r1) for ci in range(CILIOS_PER_RING)]
+# def collect_visible_cilios():
+#     z0 = cam_z_f1 - 50.0
+#     z1 = cam_z_f1 + VIEW_DIST
+#     r0 = max(0, int(z0 // CILIO_SPACING))
+#     r1 = int(z1 // CILIO_SPACING) + 1
+#     return [make_cilio(ri, ci) for ri in range(r0, r1) for ci in range(CILIOS_PER_RING)]
 
 def collect_visible_cells():
     z0 = cam_z_f1 - 50.0
@@ -322,7 +498,11 @@ def collect_obstacles():
 
 def reset_fase_1():
     global cam_z_f1, px_f1, py_f1, pontos, collected_cells, state
+    global cilio_cache, cilio_nodes   # ← adicione
 
+    cilio_cache.clear()   # ← limpa ao reiniciar
+    cilio_nodes.clear()
+    
     P5.camera()
     P5.perspective()
 
@@ -524,14 +704,26 @@ def draw_fase_1():
     global cam_z_f1, px_f1, py_f1, pontos, best_f1, collected_cells, state
 
     t  = P5.millis() / 1000.0
+    dt = min(0.05, P5.deltaTime / 1000.0)
 
-    # Movimento
     mv = MOVE_SPEED_F1
-    if P5.keyIsDown(P5.LEFT_ARROW)  or P5.keyIsDown(65): px_f1 += mv #inverti esse e o debaixo
+
+    # Lateral
+    if P5.keyIsDown(P5.LEFT_ARROW)  or P5.keyIsDown(65): px_f1 += mv 
     if P5.keyIsDown(P5.RIGHT_ARROW) or P5.keyIsDown(68): px_f1 -= mv
 
-    if P5.keyIsDown(P5.UP_ARROW)    or P5.keyIsDown(87): py_f1 -= mv
-    if P5.keyIsDown(P5.DOWN_ARROW)  or P5.keyIsDown(83): py_f1 += mv
+    # Vertical
+    if P5.keyIsDown(P5.UP_ARROW):    py_f1 -= mv
+    if P5.keyIsDown(P5.DOWN_ARROW):  py_f1 += mv
+
+    # Espaço = descer
+    if P5.keyIsDown(32): py_f1 -= mv
+    # Ctrl = descer
+    if P5.keyIsDown(17): py_f1 += mv
+
+    # Profundidade: W = acelera, S = freia/recua
+    if P5.keyIsDown(87): cam_z_f1 += FWD_SPEED_F1
+    if P5.keyIsDown(83): cam_z_f1 -= FWD_SPEED_F1 
 
     # Limita dentro do túnel
     dist = math.hypot(px_f1, py_f1)
@@ -540,66 +732,49 @@ def draw_fase_1():
         px_f1 = px_f1 / dist * lim
         py_f1 = py_f1 / dist * lim
 
-    cam_z_f1 += SPEED_F1
-
-    # Câmera
     P5.background(220, 180, 140)
-    P5.camera(px_f1, py_f1 - 60.0, -250.0,
-              px_f1, py_f1,  300.0,
+
+    P5.camera(px_f1, py_f1,        cam_z_f1 - 250.0,
+              px_f1, py_f1,        cam_z_f1 + 300.0,
               0, 1, 0)
     P5.perspective(P5.PI / 3.0, float(W) / float(H), 1.0, 5000.0)
 
-    # Luzes
-    P5.ambientLight(30, 40, 60)
-    P5.pointLight(80, 220, 140, px_f1, py_f1,  100)
-    P5.pointLight(180, 60, 255, px_f1, py_f1, -100)
+    # Luzes acompanham a câmera
+    # 1. Luz ambiente cor de vinho (elimina sombras pretas secas)
+    P5.ambientLight(60, 20, 30) 
+    
+    # 2. Luz principal (da frente): Branca levemente amarelada (brilho molhado)
+    P5.pointLight(255, 230, 200, px_f1, py_f1, cam_z_f1 + 100) 
+    
+    # 3. Luz de preenchimento (trás): Rosa choque/vermelho para dar subsurface scattering
+    P5.pointLight(255, 50, 80, px_f1, py_f1, cam_z_f1 - 100)
 
-    # Geometria
     draw_tunnel(t)
 
     hit_cilio = False
-    for cilio in collect_visible_cilios():
-        if draw_cilio(*cilio, t):
+    for item in collect_visible_cilios():
+        key, base_z, angle, length, phase = item
+        if draw_cilio(key, base_z, angle, length, phase, t, dt):
             hit_cilio = True
-
-    # for cell in collect_visible_cells():
-    #     idx, z, cx, cy = cell
-    #     draw_cell(idx, z, cx, cy, t)
-    #     dz = z - cam_z_f1
-    #     if abs(dz) < CELL_COL_DIST and math.hypot(cx - px_f1, cy - py_f1) < CELL_COL_DIST:
-    #         collected_cells.add(idx)
-    #         pontos += 1
-    #         if pontos > best_f1:
-    #             best_f1 = pontos
 
     for cell in collect_visible_cells():
         idx, z, base_cx, base_cy = cell
-        
-        # --- TRAJETÓRIA DINÂMICA ---
-        # Usamos seno/cosseno baseados no tempo (t) e no ID da célula (idx).
-        # Assim cada célula flutua em uma órbita própria, parecendo viva.
-        amp = 45.0 # O quão longe da base ela pode vagar
+        amp   = 45.0
         vel_x = 1.3 + (idx % 3) * 0.2
         vel_y = 1.1 + (idx % 2) * 0.3
-        
         dinamico_cx = base_cx + math.sin(t * vel_x + idx) * amp
         dinamico_cy = base_cy + math.cos(t * vel_y + idx * 0.8) * amp
-        
-        # Passamos a posição dinâmica para o desenho
         draw_cell(idx, z, dinamico_cx, dinamico_cy, t)
-        
         dz = z - cam_z_f1
-        
-        # Passamos a posição dinâmica para a colisão (Vital!)
         if abs(dz) < CELL_COL_DIST and math.hypot(dinamico_cx - px_f1, dinamico_cy - py_f1) < CELL_COL_DIST:
             collected_cells.add(idx)
             pontos += 1
             if pontos > best_f1:
                 best_f1 = pontos
 
-    # Vírus (vermelho/escuro para destaque)
+    # Vírus
     P5.push()
-    P5.translate(px_f1, py_f1, 0)
+    P5.translate(px_f1, py_f1, cam_z_f1)   # ← vírus também no z absoluto
     P5.noStroke()
     P5.fill(180, 30, 60)
     P5.sphere(SHIP_RADIUS_F1)
@@ -613,15 +788,12 @@ def draw_fase_1():
         P5.pop()
     P5.pop()
 
-    # HUD inline (sem buffer externo — texto direto no canvas WEBGL via ortho)
     draw_hud_f1_inline()
 
-    # Atalho ENTER → pula para fase 2
     if P5.keyIsDown(13):
         reset_fase_2()
         return
 
-    # Transições
     if hit_cilio:
         state = "over"
     elif pontos >= PONTOS_PARA_FASE2:
@@ -632,91 +804,86 @@ def draw_tunnel(t):
     SEGS  = 32
     RINGS = 20
     STEP  = VIEW_DIST / RINGS
-    
-    # Desenha as paredes do tubo como superfícies contínuas (triangle strips)
+
     for ri in range(RINGS):
-        z1_local = ri * STEP - 50.0
-        z2_local = (ri + 1) * STEP - 50.0
+        # ← z absoluto: parte de cam_z_f1 - 50 em vez de -50
+        z1_local = cam_z_f1 - 50.0 + ri * STEP
+        z2_local = cam_z_f1 - 50.0 + (ri + 1) * STEP
+
+        pulse1 = 0.5 + 0.5 * math.sin(z1_local * 0.012 - t * 2.5)
+        pulse2 = 0.5 + 0.5 * math.sin(z2_local * 0.012 - t * 2.5)
+
+        r1 = int(220 + pulse1 * 35)
+        g1 = int(140 + pulse1 * 25)
+        b1 = int(140 + pulse1 * 20)
         
-        pulse1 = 0.5 + 0.5 * math.sin(z1_local * 0.012 + cam_z_f1 * 0.008 - t * 2.5)
-        pulse2 = 0.5 + 0.5 * math.sin(z2_local * 0.012 + cam_z_f1 * 0.008 - t * 2.5)
-        
-        # Cor gradualmente pulsante (rosa/nariz)
-        r1 = int(200 + pulse1*30)
-        g1 = int(100 + pulse1*40)
-        b1 = int(80 + pulse1*30)
-        r2 = int(200 + pulse2*30)
-        g2 = int(100 + pulse2*40)
-        b2 = int(80 + pulse2*30)
-        
+        r2 = int(220 + pulse2 * 35)
+        g2 = int(140 + pulse2 * 25)
+        b2 = int(140 + pulse2 * 20)
+
         P5.noStroke()
         P5.beginShape(P5.TRIANGLE_STRIP)
         for si in range(SEGS + 1):
             a = (si / SEGS) * math.tau
             x = math.cos(a) * TUNNEL_RADIUS
             y = math.sin(a) * TUNNEL_RADIUS
-            
-            # Vértice no anel anterior (z1)
             P5.fill(r1, g1, b1, 120)
             P5.vertex(x, y, z1_local)
-            
-            # Vértice no anel seguinte (z2)
             P5.fill(r2, g2, b2, 120)
             P5.vertex(x, y, z2_local)
         P5.endShape()
-    
-    # Linhas de velocidade (opcional — deixa mais visual)
+
     P5.stroke(40, 180, 120, 100)
     P5.strokeWeight(0.8)
     P5.noFill()
     for li in range(8):
-        a = (li / 8.0) * math.tau
+        a  = (li / 8.0) * math.tau
         xv = math.cos(a) * TUNNEL_RADIUS
         yv = math.sin(a) * TUNNEL_RADIUS
-        P5.line(xv, yv, -50.0, xv, yv, VIEW_DIST)
+        P5.line(xv, yv, cam_z_f1 - 50.0, xv, yv, cam_z_f1 + VIEW_DIST)
 
 
-def draw_cilio(base_z, angle, length, phase, t):
-    z_local  = base_z - cam_z_f1
-    bx       = math.cos(angle) * TUNNEL_RADIUS
-    by       = math.sin(angle) * TUNNEL_RADIUS
-    inx      = -math.cos(angle)
-    iny      = -math.sin(angle)
-    sway     = math.sin(t * 1.8 + phase) * 0.35
-    sway2    = math.cos(t * 1.3 + phase + 1.0) * 0.2
+# def draw_cilio(base_z, angle, length, phase, t):
+#     z_local  = base_z - cam_z_f1
+#     bx       = math.cos(angle) * TUNNEL_RADIUS
+#     by       = math.sin(angle) * TUNNEL_RADIUS
+#     inx      = -math.cos(angle)
+#     iny      = -math.sin(angle)
+#     sway     = math.sin(t * 1.8 + phase) * 0.35
+#     sway2    = math.cos(t * 1.3 + phase + 1.0) * 0.2
 
-    p0x, p0y, p0z = bx, by, z_local
-    p1x = bx + inx * length * 0.33 + sway  * 60
-    p1y = by + iny * length * 0.33 + sway2 * 40
-    p1z = z_local + sway * 20
-    p2x = bx + inx * length * 0.66 + sway  * 100
-    p2y = by + iny * length * 0.66 + sway2 * 70
-    p2z = z_local + sway * 35
-    p3x = bx + inx * length + sway  * 120
-    p3y = by + iny * length + sway2 * 90
-    p3z = z_local + sway * 50
+#     p0x, p0y, p0z = bx, by, z_local
+#     p1x = bx + inx * length * 0.33 + sway  * 60
+#     p1y = by + iny * length * 0.33 + sway2 * 40
+#     p1z = z_local + sway * 20
+#     p2x = bx + inx * length * 0.66 + sway  * 100
+#     p2y = by + iny * length * 0.66 + sway2 * 70
+#     p2z = z_local + sway * 35
+#     p3x = bx + inx * length + sway  * 120
+#     p3y = by + iny * length + sway2 * 90
+#     p3z = z_local + sway * 50
 
-    pulse = 0.6 + 0.4 * math.sin(t * 2.2 + phase)
-    P5.stroke(int(20+pulse*20), int(20+pulse*20), int(20+pulse*20), 200)
-    P5.strokeWeight(3.5)
-    P5.noFill()
-    P5.beginShape()
-    P5.vertex(p0x, p0y, p0z) # Nasce aqui
-    P5.bezierVertex(p1x, p1y, p1z, p2x, p2y, p2z, p3x, p3y, p3z) # Curva
-    P5.endShape()
+#     pulse = 0.6 + 0.4 * math.sin(t * 2.2 + phase)
+#     P5.stroke(int(20+pulse*20), int(20+pulse*20), int(20+pulse*20), 200)
+#     P5.strokeWeight(3.5)
+#     P5.noFill()
+#     P5.beginShape()
+#     P5.vertex(p0x, p0y, p0z) # Nasce aqui
+#     P5.bezierVertex(p1x, p1y, p1z, p2x, p2y, p2z, p3x, p3y, p3z) # Curva
+#     P5.endShape()
 
-    if abs(p3z) < CILIO_RADIUS_COL + SHIP_RADIUS_F1:
-        if math.hypot(p3x - px_f1, p3y - py_f1) < CILIO_RADIUS_COL + SHIP_RADIUS_F1:
-            return True
-    return False
+#     if abs(p3z) < CILIO_RADIUS_COL + SHIP_RADIUS_F1:
+#         if math.hypot(p3x - px_f1, p3y - py_f1) < CILIO_RADIUS_COL + SHIP_RADIUS_F1:
+#             return True
+#     return False
 
 
 def draw_cell(idx, z, cx, cy, t):
-    z_local = z - cam_z_f1
-    pulse   = 0.85 + 0.15 * math.sin(idx * 0.7 + t * 1.2)
-    r       = CELL_RADIUS * pulse
+    # z absoluto — câmera já posicionada em cam_z_f1
+    pulse = 0.85 + 0.15 * math.sin(idx * 0.7 + t * 1.2)
+    r     = CELL_RADIUS * pulse
     P5.push()
-    P5.translate(cx, cy, z_local)
+    P5.translate(cx, cy, z)   # ← era z - cam_z_f1
     P5.noStroke()
     P5.fill(255, 220, 100)
     P5.sphere(r)
@@ -792,6 +959,9 @@ def draw_hud_f1_inline():
     # Carimba na tela sem afetar o 3D
     P5.resetShader()
     P5.image(hud, -W / 2, -H / 2, W, H)
+
+    # ← NOVO: restaura perspectiva 3D para o próximo frame
+    P5.perspective(P5.PI / 3.0, float(W) / float(H), 1.0, 5000.0)
 
 # ---------------------------------------------------------------------------
 #  Fase 2 — Tubo Sanguíneo (shader raymarching)
