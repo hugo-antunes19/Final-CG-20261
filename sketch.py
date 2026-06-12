@@ -47,7 +47,7 @@ except NameError:
 #  células. Ao coletar PONTOS_PARA_FASE2 células, avança para a Fase 2.
 # ---------------------------------------------------------------------------
 TUNNEL_RADIUS    = 220.0    # Raio do cilindro do túnel (pixels)
-SHIP_RADIUS_F1   = 18.0     # Raio da hitbox do vírus na Fase 1 (pixels)
+SHIP_RADIUS_F1   = 12.0     # Raio da hitbox do vírus na Fase 1 (pixels)
 SPEED_F1         = 3.5      # (não utilizado atualmente)
 MOVE_SPEED_F1    = 6.0      # Velocidade lateral do vírus (pixels/frame)
 FWD_SPEED_F1     = 5.5      # Velocidade de avanço/recuo no eixo Z (pixels/frame)
@@ -90,6 +90,20 @@ OB_START       = 28.0       # Posição Z do primeiro obstáculo
 RIDGE_MOD      = 64.0       # Módulo para wrap de Z (evita perda de precisão float)
 
 # ---------------------------------------------------------------------------
+#  Constantes do Vírus — fonte da verdade compartilhada entre fases
+#
+#  Fase 1 usa diretamente em pixels (escala p5.js).
+#  Fase 2 converte para unidades do shader dividindo por VIRUS_SCALE_F2.
+#  Dessa forma, virus_params() é chamado igual nas duas fases e o visual
+#  é idêntico: mesmos espinhos, mesma progressão de cor, mesmo halo.
+# ---------------------------------------------------------------------------
+VIRUS_SCALE_F2   = 40.0   # 1 unidade shader ≈ 22 pixels da Fase 1
+VIRUS_R_BASE     = 12.0   # Raio inicial (pixels F1 / unidades * VIRUS_SCALE_F2 = F2)
+VIRUS_R_MAX_MULT = 1.55   # Multiplicador máximo ao completar a Fase 1
+VIRUS_SPIKES_MIN = 3      # Espinhos no início
+VIRUS_SPIKES_MAX = 10     # Espinhos ao completar a Fase 1
+
+# ---------------------------------------------------------------------------
 #  Shaders Fase 2
 # ---------------------------------------------------------------------------
 VERT = """
@@ -130,6 +144,15 @@ uniform vec3  uObRel[MAX_OBS];// Posição tridimensional (X, Y, Z) de cada obst
 uniform float uObRad[MAX_OBS]; // Raio (escala de tamanho) de cada obstáculo individual
 uniform float uObType[MAX_OBS];// Tipo do obstáculo (usado para diferenciar hemácia/glóbulo e definir rotação)
 uniform float uHit;            // Fator de colisão (1.0 quando o jogador colide, decai para 0.0 com o tempo)
+
+// --- Uniforms do Vírus (calculados por virus_params() em Python) ---
+// Todos em unidades do shader (divididos por VIRUS_SCALE_F2 no Python)
+uniform float uVirusR;          // Raio do corpo
+uniform float uVirusNSpikes;    // Número de espinhos (float para o GLSL aceitar)
+uniform float uVirusSpikeLen;   // Comprimento da haste
+uniform float uVirusSpikeW;     // Raio do bulbo na ponta
+uniform vec3  uVirusBodyCol;    // Cor do corpo (0..1)
+uniform vec3  uVirusSpikeCol;   // Cor da ponta dos espinhos (0..1)
 
 // ===========================================================================
 //  SDFs PRIMITIVAS (Signed Distance Fields - Campos de Distância com Sinal)
@@ -237,30 +260,80 @@ float tunnelSDF(vec3 p){
 // SDF do Vírus (Jogador na Fase 2):
 // Modelado para corresponder visualmente à Fase 1 evolucionária final (esfera central + 8 espinhos).
 // Fica posicionado em Z fixo (VIRUS_Z = 8.0) à frente da câmera.
-#define VIRUS_Z  8.0
-#define VIRUS_R  0.55
+
+
+// ===========================================================================
+//  SDF DO VÍRUS — Coroa + Halo
+//
+//  Replica exatamente o draw_virus_f1 do Python:
+//    - Corpo esférico central
+//    - N espinhos distribuídos em anel no plano XY com cos/sin
+//    - Cada espinho tem haste (cápsula) + bulbo esférico na ponta
+//    - Rotação lenta do anel inteiro (t * 0.12), sway individual
+//
+//  uVirusNSpikes é float; fazemos loop até MAX_SPIKES e descartamos
+//  índices >= uVirusNSpikes (GLSL não aceita loop com bound dinâmico).
+// ===========================================================================
+
+// TODO: O vírus está feio, pensar em como melhorar o virus visualmente, talvez usando uma geometria mais complexa ou adicionando um efeito de brilho/halo para destacar o jogador
+// A sombra que o virus faz está esquisita, talvez seja necessário ajustar a iluminação ou a forma como o vírus é renderizado para melhorar a aparência geral
+// Talvez o virus nao devesse rodar totalmente, apenas no plano xy 
+ 
+#define VIRUS_Z    8.0
+#define MAX_SPIKES 12
+ 
 float sdVirus(vec3 p){
-  // Desloca para a posição local do vírus (centralizado em X/Y e fixo em Z=8.0)
   vec3 vp = p - vec3(0.0, 0.0, VIRUS_Z);
-  // Rotaciona lentamente o vírus para torná-lo vivo e dinâmico
-  vp.xy = rot(uTime * 0.5) * vp.xy;
-  vp.xz = rot(uTime * 0.3) * vp.xz;
-  
-  float d = sdSphere(vp, VIRUS_R); // Corpo esférico central
-  float k = VIRUS_R * 0.1;         // Mistura suave para os espinhos parecerem brotar do corpo
-  
-  // 6 espinhos alinhados nos eixos principais (+X, -X, +Y, -Y, +Z, -Z)
-  d = smin(d, sdSphere(vp - vec3( VIRUS_R*0.85, 0.0, 0.0), VIRUS_R*0.3), k);
-  d = smin(d, sdSphere(vp - vec3(-VIRUS_R*0.85, 0.0, 0.0), VIRUS_R*0.3), k);
-  d = smin(d, sdSphere(vp - vec3(0.0,  VIRUS_R*0.85, 0.0), VIRUS_R*0.3), k);
-  d = smin(d, sdSphere(vp - vec3(0.0, -VIRUS_R*0.85, 0.0), VIRUS_R*0.3), k);
-  d = smin(d, sdSphere(vp - vec3(0.0, 0.0,  VIRUS_R*0.85), VIRUS_R*0.3), k);
-  d = smin(d, sdSphere(vp - vec3(0.0, 0.0, -VIRUS_R*0.85), VIRUS_R*0.3), k);
-  
-  // 2 espinhos adicionais nas diagonais para quebrar a simetria ortogonal pura
-  d = smin(d, sdSphere(vp - vec3( VIRUS_R*0.6, VIRUS_R*0.6, 0.0), VIRUS_R*0.25), k);
-  d = smin(d, sdSphere(vp - vec3(-VIRUS_R*0.6, 0.0, VIRUS_R*0.6), VIRUS_R*0.25), k);
+  vp.xy = rot(uTime * 0.18) * vp.xy;
+  vp.xz = rot(uTime * 0.10) * vp.xz;
+ 
+  float R   = uVirusR;
+  float sL  = uVirusSpikeLen;
+  float sW  = uVirusSpikeW;
+  float N   = uVirusNSpikes;
+  float TAU = 6.28318530718;
+ 
+  float d = sdSphere(vp, R);
+ 
+  for(int i = 0; i < MAX_SPIKES; i++){
+    if(float(i) >= N) break;
+ 
+    float a_base = (float(i) / N) * TAU + uTime * 0.12;
+    float sway   = sin(uTime * 1.8 + float(i) * 0.9) * 0.18;
+    float tip_a  = a_base + sway;
+ 
+    vec3 base_pt = vec3(cos(a_base) * R * 0.88, sin(a_base) * R * 0.88, 0.0);
+    vec3 mid_pt  = vec3(cos(a_base + sway*0.5) * (R + sL*0.6),
+                        sin(a_base + sway*0.5) * (R + sL*0.6), 0.0);
+    vec3 tip_pt  = vec3(cos(tip_a) * (R + sL), sin(tip_a) * (R + sL), 0.0);
+ 
+    vec3 ab, ap; float h;
+    ab = mid_pt - base_pt; ap = vp - base_pt;
+    h = clamp(dot(ap,ab)/dot(ab,ab), 0.0, 1.0);
+    d = min(d, length(ap - h*ab) - sW*0.55);
+ 
+    ab = tip_pt - mid_pt; ap = vp - mid_pt;
+    h = clamp(dot(ap,ab)/dot(ab,ab), 0.0, 1.0);
+    d = min(d, length(ap - h*ab) - sW*0.55);
+ 
+    d = min(d, sdSphere(vp - tip_pt, sW));
+  }
   return d;
+}
+
+// ===========================================================================
+//  COR DO VÍRUS — distingue corpo, haste e bulbo pelo gradiente de distância
+//
+//  Como o raymarcher só sabe que bateu no vírus (mat == 3), usamos a
+//  distância até o centro para separar corpo (perto) de espinhos (longe).
+// ===========================================================================
+vec3 virusColor(vec3 p, vec3 n, float dif, float amb, float fre){
+  vec3 vp  = p - vec3(0.0, 0.0, VIRUS_Z);
+  // Normalized dist from center: 0 = centro do corpo, 1 = ponta do espinho
+  float distN = clamp((length(vp) - uVirusR) / uVirusSpikeLen, 0.0, 1.0);
+  vec3 base   = mix(uVirusBodyCol, uVirusSpikeCol, distN);
+  vec3 col    = base * (amb + dif * 0.9) + fre * uVirusSpikeCol * 0.5;
+  return col;
 }
 
 // ===========================================================================
@@ -389,9 +462,7 @@ void main(){
       col = oc * (amb + dif * 0.9) + fre * vec3(0.6, 0.7, 1.0); // Brilho azul de borda
     } else {
       // MATERIAL 3: Vírus (Jogador)
-      vec3 body  = vec3(0.78, 0.08, 0.20); // Vermelho carmim fosco para o corpo
-      vec3 spike = vec3(0.94, 0.20, 0.27); // Vermelho brilhante/rosa para os espinhos
-      col = body * (amb + dif * 0.9) + fre * spike * 0.5; // Borda fresnel destaca os espinhos
+      col = virusColor(p, n, dif, amb, fre);
     }
     
     // Efeito de Névoa Volumétrica (Fog):
@@ -464,83 +535,6 @@ def get_cilio(indice_anel, indice_cilio):
         fase = rng.uniform(0, math.tau)
         cilio_cache[key] = (posicao_z, angulo, comprimento, fase)
     return cilio_cache[key]
-
-# ---------------------------------------------------------------------------
-#  init_cilio_nodes — Inicializa a cadeia de física spring-damper
-# ---------------------------------------------------------------------------
-def init_cilio_nodes(key, base_x, base_y, base_z, dir_x, dir_y, comprimento):
-    """Cria os nós de física ao longo do cílio (da base à ponta).
-
-    Cada nó tem posição atual (x, y), velocidade (vx, vy) e
-    posição de repouso (rx, ry). O nó 0 é a raiz (fixa na parede).
-
-    Parâmetros:
-        key         -- Tupla (indice_anel, indice_cilio) para o cache
-        base_x/y    -- Posição da base do cílio na parede do túnel
-        base_z      -- Posição Z da base (não usado na física 2D)
-        dir_x/y     -- Vetor unitário apontando da parede para o centro
-        comprimento -- Comprimento total do cílio
-    """
-    seg = comprimento / WHIP_SEGS  # Distância entre nós consecutivos
-    nodes = []
-    for i in range(WHIP_SEGS + 1):
-        nodes.append({
-            'x':  base_x + dir_x * seg * i,   # Posição atual X
-            'y':  base_y + dir_y * seg * i,   # Posição atual Y
-            'vx': 0.0,                         # Velocidade X
-            'vy': 0.0,                         # Velocidade Y
-            'rx': base_x + dir_x * seg * i,   # Posição de repouso X
-            'ry': base_y + dir_y * seg * i,   # Posição de repouso Y
-        })
-    cilio_nodes[key] = nodes
-
-# ---------------------------------------------------------------------------
-#  update_cilio_nodes — Simula a física de chicote (spring-damper)
-#
-#  Para cada nó (exceto a raiz fixa), aplica:
-#    1. Força de mola: puxa o nó de volta à posição de repouso
-#    2. Força oscilatória: empurra na direção perpendicular (balançar)
-#    3. Amortecimento: multiplica velocidade por WHIP_DAMP cada step
-# ---------------------------------------------------------------------------
-def update_cilio_nodes(key, base_x, base_y, dir_x, dir_y, fase, tempo, dt):
-    nodes = cilio_nodes[key]
-
-    # Raiz sempre na parede — nunca se move
-    nodes[0]['x'] = base_x
-    nodes[0]['y'] = base_y
-
-    # Direção perpendicular ao eixo radial (plano XY)
-    perp_x = -dir_y
-    perp_y =  dir_x
-
-    SUBSTEPS = 4
-    sdt = dt / SUBSTEPS
-
-    for _ in range(SUBSTEPS):
-        for i in range(1, WHIP_SEGS + 1):
-            n  = nodes[i]
-            np = nodes[i - 1]
-
-            # Mola: puxa de volta para posição de repouso relativa ao nó anterior
-            # repouso relativo = nó i de repouso - nó i-1 de repouso
-            rest_rel_x = nodes[i]['rx'] - nodes[i-1]['rx']
-            rest_rel_y = nodes[i]['ry'] - nodes[i-1]['ry']
-
-            target_x = np['x'] + rest_rel_x
-            target_y = np['y'] + rest_rel_y
-
-            dx = n['x'] - target_x
-            dy = n['y'] - target_y
-
-            # Força oscilatória cresce linearmente da base à ponta
-            amp = WHIP_FORCE * (i / WHIP_SEGS)
-            fx = -dx * WHIP_STIFF + perp_x * amp * math.sin(tempo * WHIP_FREQ       + fase + i * 0.5)
-            fy = -dy * WHIP_STIFF + perp_y * amp * math.sin(tempo * WHIP_FREQ * 0.8 + fase + i * 0.4)
-
-            n['vx'] = (n['vx'] + fx * sdt) * WHIP_DAMP
-            n['vy'] = (n['vy'] + fy * sdt) * WHIP_DAMP
-            n['x'] += n['vx']
-            n['y'] += n['vy']
 
 # ---------------------------------------------------------------------------
 #  collect_visible_cilios — Retorna cílios na janela de visibilidade
@@ -683,15 +677,6 @@ hit_flash = 0.0
 #  mesmo índice sempre gera o mesmo objeto (determinismo por seed).
 # ---------------------------------------------------------------------------
 
-def make_cilio(indice_anel, indice_cilio):
-    """Versão legada de get_cilio (sem cache). Mantida para referência."""
-    rng    = random.Random((indice_anel * 997 + indice_cilio * 31 + SEED) & 0xFFFFFFFF)
-    posicao_z = indice_anel * CILIO_SPACING
-    angulo = (indice_cilio / CILIOS_PER_RING) * math.tau + rng.uniform(-0.2, 0.2)
-    comprimento = rng.uniform(CILIO_LEN * 0.5, CILIO_LEN)
-    fase = rng.uniform(0, math.tau)
-    return posicao_z, angulo, comprimento, fase
-
 def make_cell(indice_celula):
     """Gera posição de uma célula infectável dentro do túnel.
 
@@ -705,13 +690,6 @@ def make_cell(indice_celula):
     raio_polar  = rng.uniform(TUNNEL_RADIUS * 0.20, TUNNEL_RADIUS * 0.70)
     angulo = rng.uniform(0, math.tau)
     return posicao_z, raio_polar * math.cos(angulo), raio_polar * math.sin(angulo)
-
-# def collect_visible_cilios():
-#     z0 = cam_z_f1 - 50.0
-#     z1 = cam_z_f1 + VIEW_DIST
-#     r0 = max(0, int(z0 // CILIO_SPACING))
-#     r1 = int(z1 // CILIO_SPACING) + 1
-#     return [make_cilio(ri, ci) for ri in range(r0, r1) for ci in range(CILIOS_PER_RING)]
 
 def collect_visible_cells():
     """Retorna células visíveis e ainda não coletadas na janela de visibilidade."""
@@ -890,75 +868,11 @@ def handle_space():
 #  Usamos ortho + translate para poder usar text() no modo WEBGL
 # ---------------------------------------------------------------------------
 
-# def draw_menu(title, line2, line3):
-#     P5.background(10, 15, 25)
-#     P5.resetShader()
-#     P5.ortho()
-#     P5.noLights()
-
-#     # Caixa de fundo semitransparente
-#     P5.noStroke()
-#     P5.fill(0, 0, 0, 150)
-#     P5.rectMode(P5.CENTER)
-#     P5.rect(0, 0, W, 140)
-#     P5.rectMode(P5.CORNER)
-
-#     # Título
-#     P5.textAlign(P5.CENTER, P5.CENTER)
-#     P5.fill(255, 230, 120)
-#     P5.textSize(34)
-#     P5.text(title, 0, -28)
-
-#     # Linha 2
-#     P5.fill(220, 220, 220)
-#     P5.textSize(18)
-#     P5.text(line2, 0, 4)
-
-#     # Linha 3
-#     P5.fill(150, 230, 255)
-#     P5.text(line3, 0, 34)
-
-#     P5.textAlign(P5.LEFT, P5.BASELINE)
-
-# def draw_menu(title, line2, line3):
-#     P5.background(10, 15, 25)
-#     P5.resetShader()
-    
-#     # Limpa o buffer 2D para desenhar o menu
-#     hud.clear()
-    
-#     # Caixa de fundo semitransparente
-#     hud.noStroke()
-#     hud.fill(0, 0, 0, 150)
-#     hud.rectMode(P5.CENTER)
-#     hud.rect(W / 2, H / 2, W, 140)
-#     hud.rectMode(P5.CORNER)
-
-#     # Título
-#     hud.textAlign(P5.CENTER, P5.CENTER)
-#     hud.fill(255, 230, 120)
-#     hud.textSize(34)
-#     hud.text(title, W / 2, H / 2 - 28)
-
-#     # Linha 2
-#     hud.fill(220, 220, 220)
-#     hud.textSize(18)
-#     hud.text(line2, W / 2, H / 2 + 4)
-
-#     # Linha 3
-#     hud.fill(150, 230, 255)
-#     hud.text(line3, W / 2, H / 2 + 34)
-
-#     hud.textAlign(P5.LEFT, P5.BASELINE)
-    
-#     # Carimba o buffer na tela WEBGL
-#     P5.image(hud, -W / 2, -H / 2, W, H)
-
 def draw_menu(title, line2, line3):
     P5.background(220, 180, 140)
     P5.resetShader()
     
-    # === A MÁGICA AQUI: Reseta a câmera 3D para o padrão ===
+    # Reseta a câmera 3D para o padrão 
     P5.camera()
     P5.perspective()
     
@@ -992,8 +906,35 @@ def draw_menu(title, line2, line3):
     # Carimba o buffer na tela WEBGL
     P5.image(hud, -W / 2, -H / 2, W, H)
 
+# ------------------------------------------------------------------------------
+# Virus (Jogador)
+# ------------------------------------------------------------------------------
+
+def virus_params(prog_t):
+    """Fonte única da verdade visual do vírus. Usada nas duas fases."""
+    virus_r   = _lerp(VIRUS_R_BASE, VIRUS_R_BASE * VIRUS_R_MAX_MULT, prog_t)
+    n_spikes  = VIRUS_SPIKES_MIN + int(prog_t * (VIRUS_SPIKES_MAX - VIRUS_SPIKES_MIN))
+    spike_len = _lerp(8.0, 22.0, prog_t)
+    spike_w   = _lerp(2.5,  5.0, prog_t)
+ 
+    br = int(_lerp(175, 195, prog_t))
+    bg = int(_lerp(95,   18, prog_t))
+    bb = int(_lerp(120,  48, prog_t))
+    sr = min(255, br + 50)
+    sg = min(255, bg + 67)
+    sb = min(255, bb + 62)
+ 
+    return {
+        "virus_r":    virus_r,
+        "n_spikes":   n_spikes,
+        "spike_len":  spike_len,
+        "spike_w":    spike_w,
+        "body_rgb":   (br, bg, bb),
+        "spike_rgb":  (sr, sg, sb),
+    }
+
 # ---------------------------------------------------------------------------
-#  Fase 1 — Túnel Epitelial (geometria 3D nativa p5.js)
+#  Fase 1 — Túnel Epitelial 
 # ---------------------------------------------------------------------------
 
 def draw_fase_1():
@@ -1071,67 +1012,12 @@ def draw_fase_1():
 
     # =======================================================================
     #  Renderização do Vírus (Jogador) — Evolução Visual
-    #
-    #  O vírus sofre mutação e evolui visualmente à medida que coleta células.
-    #  A aparência muda em 4 eixos principais: Cor, Tamanho, Quantidade de Espinhos
-    #  e Tamanho dos Espinhos. Tudo é interpolado usando a variável 'prog_t'.
     # =======================================================================
-    
-    # 1. Cálculo da Progressão (0.0 a 1.0)
-    # Garante que a mutação pare de crescer ao atingir a meta da fase (PONTOS_PARA_FASE2)
-    prog_t = min(1.0, pontos / PONTOS_PARA_FASE2)
-    
-    # 2. Interpolação de Cores (RGB)
-    # Inicia como um tom neutro/pálido (180, 120, 130) e evolui para um
-    # vermelho agressivo e vibrante (200, 20, 50) no final da fase.
-    vr = int(180 + prog_t * 20)
-    vg = int(120 - prog_t * 100)
-    vb = int(130 - prog_t * 80)
-    
-    # 3. Evolução Geométrica
-    virus_r = SHIP_RADIUS_F1 * (1.0 + prog_t * 0.4) # Cresce até 40% a mais do tamanho original
-    n_spikes = 3 + int(prog_t * 9)                  # Começa com 3 espinhos, termina com 12
-    spike_r  = 4 + prog_t * 4                       # Espinhos dobram de tamanho (de 4 para 8)
 
-    P5.push()
-    # Move a "caneta 3D" para a posição atual do jogador na tela
-    P5.translate(px_f1, py_f1, cam_z_f1)
-    P5.noStroke()
-    
-    # 4. Desenha o corpo central do Vírus
-    P5.fill(vr, vg, vb)
-    P5.sphere(virus_r)
-    
-    # 5. Desenha os Espinhos (Proteínas Virais)
-    # Os espinhos são distribuídos uniformemente em um anel ao redor do corpo
-    for i in range(n_spikes):
-        # Ângulo base do espinho no anel (0 a 2π)
-        a = (i / n_spikes) * math.tau
-        
-        # Animação Procedural: 'elev' faz os espinhos subirem e descerem suavemente no eixo Z,
-        # dando a impressão de um organismo vivo que respira e se contorce.
-        elev = math.sin(i * 1.2 + t * 0.5) * 0.3
-        
-        P5.push()
-        # Posiciona o espinho na borda do corpo principal (0.85 * raio = levemente afundado no corpo)
-        P5.translate(math.cos(a) * virus_r * 0.85,
-                     math.sin(a) * virus_r * 0.85,
-                     elev * virus_r * 0.3)
-        
-        # A cor do espinho é sempre uma versão um pouco mais clara e brilhante do corpo
-        P5.fill(min(255, vr + 40), min(255, vg + 30), min(255, vb + 20))
-        P5.sphere(spike_r)
-        P5.pop()
-        
-    # 6. Efeito de Brilho / Aura (Apenas se já coletou alguma célula)
-    if prog_t > 0:
-        # A aura pulsa em opacidade baseada no tempo
-        glow_pulse = 0.8 + 0.2 * math.sin(t * 3.0)
-        # Esfera translúcida alaranjada, cuja opacidade total é ditada pelo progresso (prog_t)
-        P5.fill(255, 100, 60, int(40 * prog_t * glow_pulse))
-        P5.sphere(virus_r * 1.5) # Aura é 50% maior que o corpo
-        
-    P5.pop()
+    #  Progressão visual (0.0 → 1.0 conforme células coletadas)
+    prog_t = min(1.0, pontos / PONTOS_PARA_FASE2)
+
+    draw_virus_f1(prog_t, t, px_f1, py_f1, cam_z_f1)
 
     draw_hud_f1_inline()
 
@@ -1144,6 +1030,95 @@ def draw_fase_1():
     elif pontos >= PONTOS_PARA_FASE2:
         state = "win"
 
+def draw_virus_f1(prog_t, t, px, py, cam_z):
+    """Desenha o vírus na Fase 1 usando p5.js WEBGL.
+
+    Consome virus_params() diretamente — nenhum parâmetro visual
+    é calculado aqui. Basta passar a posição do jogador.
+
+    Parâmetros:
+        prog_t    -- Progressão 0.0-1.0 (células coletadas / meta)
+        t         -- Tempo em segundos (para animações de sway)
+        px, py    -- Posição lateral do jogador no plano XY
+        cam_z     -- Posição Z da câmera (usado para translate Z)
+    """
+    vp = virus_params(prog_t)
+
+    virus_r    = vp["virus_r"]
+    n_spikes   = vp["n_spikes"]
+    spike_len  = vp["spike_len"]
+    spike_w    = vp["spike_w"]
+    br, bg, bb = vp["body_rgb"]
+    sr, sg, sb = vp["spike_rgb"]
+
+    P5.push()
+    P5.translate(px, py, cam_z)
+
+    # ------------------------------------------------------------------
+    #  1. Espinhos curvos com receptor bulboso (coroa de proteínas)
+    #     Desenhados ANTES do corpo para ficarem atrás dele quando
+    #     o p5.js fizer a ordenação z-buffer.
+    #     Como p5.js não tem quadraticCurveTo 3D, aproximamos a curva
+    #     com dois segmentos de linha — suficiente para dar a curvatura.
+    # ------------------------------------------------------------------
+    P5.noFill()
+    P5.strokeWeight(spike_w)
+
+    for i in range(n_spikes):
+        a_base = (i / n_spikes) * math.tau + t * 0.12   # rotação lenta da coroa
+        sway   = math.sin(t * 1.8 + i * 0.9) * 0.18    # balanceio orgânico
+        tip_a  = a_base + sway
+
+        # Ponto de saída na superfície do corpo
+        bx = math.cos(a_base) * virus_r * 0.88
+        by = math.sin(a_base) * virus_r * 0.88
+
+        # Ponto de controle intermediário (curva suave)
+        mx = math.cos(a_base + sway * 0.5) * (virus_r + spike_len * 0.6)
+        my = math.sin(a_base + sway * 0.5) * (virus_r + spike_len * 0.6)
+
+        # Ponta da proteína
+        tx = math.cos(tip_a) * (virus_r + spike_len)
+        ty = math.sin(tip_a) * (virus_r + spike_len)
+
+        # Segmento base → meio (cor do corpo)
+        P5.stroke(br, bg, bb, 210)
+        P5.line(bx, by, 0, mx, my, 0)
+
+        # Segmento meio → ponta (cor da ponta, mais clara)
+        P5.stroke(sr, sg, sb, 220)
+        P5.line(mx, my, 0, tx, ty, 0)
+
+        # Receptor bulboso esférico na ponta
+        P5.noStroke()
+        P5.fill(sr, sg, sb, 230)
+        P5.push()
+        P5.translate(tx, ty, 0)
+        P5.sphere(spike_w * 1.15)
+        P5.pop()
+
+    # ------------------------------------------------------------------
+    #  2. Corpo principal com especular simulado
+    #     p5.js não expõe shading custom, então usamos duas esferas:
+    #     - Corpo opaco com a cor principal
+    #     - Esfera menor deslocada (highlight) para simular especular
+    # ------------------------------------------------------------------
+    P5.noStroke()
+
+    # Corpo
+    P5.fill(br, bg, bb)
+    P5.sphere(virus_r)
+
+    # Highlight especular (esfera branca translúcida deslocada para
+    # cima-esquerda, imitando reflexo de luz direcional)
+    spec_alpha = int(_lerp(128, 80, prog_t))   # some levemente ao evoluir
+    P5.fill(255, 220, 230, spec_alpha)
+    P5.push()
+    P5.translate(-virus_r * 0.32, -virus_r * 0.38, virus_r * 0.2)
+    P5.sphere(virus_r * 0.42)
+    P5.pop()
+
+    P5.pop()   # fecha o translate principal do vírus
 
 def draw_tunnel(t):
     SEGS  = 32
@@ -1188,41 +1163,6 @@ def draw_tunnel(t):
         P5.line(xv, yv, cam_z_f1 - 200.0, xv, yv, cam_z_f1 + VIEW_DIST)
 
 
-# def draw_cilio(base_z, angle, length, phase, t):
-#     z_local  = base_z - cam_z_f1
-#     bx       = math.cos(angle) * TUNNEL_RADIUS
-#     by       = math.sin(angle) * TUNNEL_RADIUS
-#     inx      = -math.cos(angle)
-#     iny      = -math.sin(angle)
-#     sway     = math.sin(t * 1.8 + phase) * 0.35
-#     sway2    = math.cos(t * 1.3 + phase + 1.0) * 0.2
-
-#     p0x, p0y, p0z = bx, by, z_local
-#     p1x = bx + inx * length * 0.33 + sway  * 60
-#     p1y = by + iny * length * 0.33 + sway2 * 40
-#     p1z = z_local + sway * 20
-#     p2x = bx + inx * length * 0.66 + sway  * 100
-#     p2y = by + iny * length * 0.66 + sway2 * 70
-#     p2z = z_local + sway * 35
-#     p3x = bx + inx * length + sway  * 120
-#     p3y = by + iny * length + sway2 * 90
-#     p3z = z_local + sway * 50
-
-#     pulse = 0.6 + 0.4 * math.sin(t * 2.2 + phase)
-#     P5.stroke(int(20+pulse*20), int(20+pulse*20), int(20+pulse*20), 200)
-#     P5.strokeWeight(3.5)
-#     P5.noFill()
-#     P5.beginShape()
-#     P5.vertex(p0x, p0y, p0z) # Nasce aqui
-#     P5.bezierVertex(p1x, p1y, p1z, p2x, p2y, p2z, p3x, p3y, p3z) # Curva
-#     P5.endShape()
-
-#     if abs(p3z) < CILIO_RADIUS_COL + SHIP_RADIUS_F1:
-#         if math.hypot(p3x - px_f1, p3y - py_f1) < CILIO_RADIUS_COL + SHIP_RADIUS_F1:
-#             return True
-#     return False
-
-
 def draw_cell(idx, z, cx, cy, t):
     # z absoluto — câmera já posicionada em cam_z_f1
     pulse = 0.85 + 0.15 * math.sin(idx * 0.7 + t * 1.2)
@@ -1235,41 +1175,6 @@ def draw_cell(idx, z, cx, cy, t):
     P5.fill(255, 240, 150, 100)
     P5.sphere(r * 1.35)
     P5.pop()
-
-
-# def draw_hud_f1_inline():
-#     """HUD desenhado direto no canvas WEBGL usando projeção ortográfica."""
-#     P5.noLights()
-#     P5.ortho(-W/2, W/2, -H/2, H/2, -1, 1)
-
-#     # Fundo da caixa de HUD (canto superior esquerdo)
-#     P5.noStroke()
-#     P5.fill(30, 30, 50, 180)
-#     P5.rectMode(P5.CORNER)
-#     P5.rect(-W/2 + 10, -H/2 + 10, 220, 65, 8)
-
-#     # Barra de progresso
-#     bw = 190.0 * (pontos / PONTOS_PARA_FASE2)
-#     P5.fill(60, 200, 100)
-#     P5.rect(-W/2 + 18, -H/2 + 38, bw, 14, 4)
-
-#     # Texto
-#     P5.textSize(14)
-#     P5.fill(80, 220, 120)
-#     P5.textAlign(P5.LEFT, P5.TOP)
-#     P5.text("CELULAS INFECTADAS", -W/2 + 20, -H/2 + 12)
-#     P5.fill(200, 200, 200)
-#     P5.text("%d / %d" % (pontos, PONTOS_PARA_FASE2), -W/2 + 20, -H/2 + 54)
-
-#     P5.fill(120, 180, 255, 200)
-#     P5.textSize(13)
-#     P5.textAlign(P5.CENTER, P5.BOTTOM)
-#     P5.text("WASD / setas: mover  |  desvie dos cilios!", 0, H/2 - 6)
-
-#     P5.textAlign(P5.LEFT, P5.BASELINE)
-
-#     # Restaura perspectiva para o próximo frame
-#     P5.perspective(P5.PI / 3.0, float(W) / float(H), 1.0, 5000.0)
 
 def draw_hud_f1_inline():
     # Limpa o buffer 2D
@@ -1363,6 +1268,7 @@ def draw_fase_2():
     prog.setUniform("uObRad",      _to_js([float(v) for v in rads]))
     prog.setUniform("uObType",     _to_js([float(v) for v in types]))
     prog.setUniform("uHit",        float(hit_flash))
+    set_virus_uniforms(prog, 1.0)
     P5.rect(0, 0, W, H)
 
     # HUD fase 2 via buffer 2D (necessário porque o shader ocupa tudo)
@@ -1383,3 +1289,20 @@ def draw_hud_f2():
     
     P5.resetShader()
     P5.image(hud, -W / 2, -H / 2, W, H)
+
+def _lerp(a, b, x):
+    return a + (b - a) * x
+ 
+def set_virus_uniforms(shader, prog_t):
+    """Passa os params do vírus ao shader, convertendo pixels → unidades shader."""
+    vp = virus_params(prog_t)
+    sc = VIRUS_SCALE_F2
+    br, bg, bb = vp["body_rgb"]
+    sr, sg, sb = vp["spike_rgb"]
+    shader.setUniform("uVirusR",        float(vp["virus_r"]   / sc))
+    shader.setUniform("uVirusNSpikes",  float(vp["n_spikes"]))
+    shader.setUniform("uVirusSpikeLen", float(vp["spike_len"] / sc))
+    shader.setUniform("uVirusSpikeW",   float(vp["spike_w"]   / sc))
+    shader.setUniform("uVirusBodyCol",  _to_js([br/255.0, bg/255.0, bb/255.0]))
+    shader.setUniform("uVirusSpikeCol", _to_js([sr/255.0, sg/255.0, sb/255.0]))
+
