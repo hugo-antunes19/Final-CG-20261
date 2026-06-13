@@ -227,27 +227,60 @@ float smin(float a, float b, float k){
 // 1. Um Toro externo que forma a borda arredondada e espessa
 // 2. Um cilindro muito fino (disco) posicionado no centro do toro
 float sdHemacia(vec3 p, float r){
-  // Borda externa (anel do toro)
-  vec2 q = vec2(length(p.xz) - r * 0.55, p.y);
-  float rim = length(q) - r * 0.3;
-  // Centro fino (disco achatado no plano XZ delimitado pelo raio)
-  float disc = max(abs(p.y) - r * 0.1, length(p.xz) - r * 0.55);
-  // Retorna o menor valor entre a borda e o centro
-  return min(rim, disc);
+  // Disco bicôncavo: centro fino + borda arredondada (anel)
+  float disc = max(abs(p.y) - r * 0.09, length(p.xz) - r * 0.52);
+  vec2 q = vec2(length(p.xz) - r * 0.52, p.y);
+  float edge  = length(q) - r * 0.28;
+  return min(disc, edge);
 }
 
-// SDF de um Glóbulo Branco: modelado como uma esfera deformada
-// Usa a função 'smin' para fundir organicamente uma esfera central maior
-// com 3 esferas menores projetadas para fora, simulando pseudópodes ativos
-float sdGlobuloBranco(vec3 p, float r){
-  float d = sdSphere(p, r * 0.75); // Núcleo principal
-  float k = r * 0.25;              // Fator de suavização da fusão
-  // Fusão com pseudópode 1 (diagonal superior frontal)
-  d = smin(d, sdSphere(p - vec3(r*0.55, r*0.3, 0.0), r*0.35), k);
-  // Fusão com pseudópode 2 (diagonal inferior traseira esquerda)
-  d = smin(d, sdSphere(p - vec3(-r*0.3, -r*0.45, r*0.35), r*0.3), k);
-  // Fusão com pseudópode 3 (diagonal superior esquerda)
-  d = smin(d, sdSphere(p - vec3(0.1*r, r*0.35, -r*0.55), r*0.32), k);
+// Glóbulo branco: esfera + microvilosidades. LOD opcional (uLodEnable / uLodStrength).
+#define N_MICRO_MAX 24 // TODO: Alocar para o local do código apropriado
+// TODO: Adicionar uma função para gerar o número de microvilosidades com base no LOD
+
+float sdGlobuloBranco(vec3 p, float r, float seed, float lod){
+  float d = sdSphere(p, r * 0.68);
+  float lp = length(p);
+  float lodMix = uLodEnable * uLodStrength;
+
+  // Saídas antecipadas para melhorar performance
+  // Se o ponto estiver dentro da esfera principal, retorna a distância
+  if(lp < r * 0.52) return d;
+  // Se o LOD estiver ativo e a distância for menor que 0.08, retorna a distância
+  if(lodMix > 0.001 && lod < 0.08) return d;
+  // Se o ponto estiver fora da esfera principal, retorna a distância
+  if(lp > r * 1.08) return d;
+
+  // Interpolação entre 1.0 (qualidade máxima) e smoothstep(0.12, 0.82, lod)
+  float hairT = mix(1.0, smoothstep(0.12, 0.82, lod), lodMix);
+  // Interpolação entre N_MICRO_MAX e mix(5.0, float(N_MICRO_MAX), hairT)
+  int nHair = int(mix(float(N_MICRO_MAX), mix(5.0, float(N_MICRO_MAX), hairT), lodMix));
+
+  for(int i = 0; i < N_MICRO_MAX; i++){
+    if(i >= nHair) break;
+
+    float fi = float(i);
+    // Distribuição Fibonacci na esfera de forma uniforme
+    float y = 1.0 - (fi + 0.5) * (2.0 / float(N_MICRO_MAX));
+    float w = sqrt(max(0.0, 1.0 - y * y));
+    float theta = fi * 2.399963 + seed * 1.37;
+    // Variação aleatória para a direção da cápsula (pêlos curtos na superfície)
+    float h0 = hash1(seed + fi * 19.17);
+    float h1 = hash1(seed + fi * 41.23);
+    // Normalização da direção da cápsula
+    vec3 dir = normalize(vec3(cos(theta) * w, y, sin(theta) * w)
+      + (vec3(h0, h1, fract(h0 + h1)) - 0.5) * 0.22);
+
+    float surf = r * (0.66 + 0.05 * fract(h0 * 7.1));
+    // Comprimento da cápsula (pêlos curtos na superfície)
+    float hLen = r * (0.09 + 0.06 * fract(h1 * 11.3));
+    // Raio da cápsula (pêlos curtos na superfície)
+    float hRad = r * (0.030 + 0.018 * fract(h0 * 13.7));
+    // Ponto base da cápsula
+    vec3 base = dir * surf;
+    // Distância entre o ponto base e o ponto final da cápsula
+    d = min(d, sdCapsule(p, base, base + dir * hLen, hRad));
+  }
   return d;
 }
 
@@ -257,14 +290,17 @@ float sdGlobuloBranco(vec3 p, float r){
 // 3. Escolhe a geometria correta baseada no tipo (typ < 3.14 representa hemácia)
 float obstacleSDF(vec3 p, vec3 center, float r, float typ){
   vec3 rp = p - center;
-  float ph = typ + uTime * 0.3; // fase da rotação baseada no tempo
+  float ph = typ + uTime * 0.3;
+  if(typ < 3.14){
+    // Hemácia: rotação suave (evita disco virar "linha" ou formas quebradas)
+    rp.xz = rot(ph * 0.22) * rp.xz;
+    rp.yz = rot(ph * 0.14) * rp.yz;
+    return sdHemacia(rp, r);
+  }
   rp.xy = rot(ph * 0.4) * rp.xy;
   rp.xz = rot(ph * 0.3) * rp.xz;
-  if(typ < 3.14){
-    return sdHemacia(rp, r);
-  } else {
-    return sdGlobuloBranco(rp, r * 1.2);
-  }
+  float lod = clamp(1.0 - center.z / 65.0, 0.0, 1.0);
+  return sdGlobuloBranco(rp, r * 1.2, typ, lod);
 }
 
 // SDF do Túnel (Vaso Sanguíneo):
@@ -444,7 +480,7 @@ void main(){
   bool hit = false;     // Flag de colisão visual do raio
   
   // Loop de Raymarching (Máximo de 90 passos para bom equilíbrio de desempenho)
-  for(int i = 0; i < 90; i++){
+  for(int i = 0; i < 70; i++){
     vec3 p = ro + rd * t;        // Posição atual da ponta do raio
     float d = mapScene(p, mat);  // Consulta a SDF da cena
     if(d < 0.002){               // Se a distância for quase zero, atingiu a superfície (HIT!)
@@ -480,8 +516,12 @@ void main(){
       col = oc * (amb + dif * 0.8 + sss) + fre * vec3(0.9, 0.2, 0.1);
     } else if(mat < 2.5){
       // MATERIAL 2: Glóbulos Brancos
-      vec3 oc = vec3(0.9, 0.92, 0.95);  // Branco azulado translúcido
-      col = oc * (amb + dif * 0.9) + fre * vec3(0.6, 0.7, 1.0); // Brilho azul de borda
+      vec3 oc = vec3(0.86, 0.88, 0.91);
+      float rim = pow(fre, 1.4);
+      float lodMix = uLodEnable * uLodStrength;
+      float tex = sin(p.x * 15.0 + p.y * 19.0) * sin(p.y * 17.0 + p.z * 21.0) * 0.5 + 0.5;
+      float texAmt = lodMix * 0.10;
+      col = oc * (1.0 - texAmt + texAmt * tex) * (amb + dif * 0.92) + rim * vec3(0.95, 0.97, 1.0) * 0.45;
     } else {
       // MATERIAL 3: Vírus (Jogador)
       col = virusColor(p, n, dif, amb, fre);
@@ -693,6 +733,13 @@ score     = 0.0
 best_f2   = 0.0
 hit_flash = 0.0
 
+# LOD glóbulos brancos (Fase 2) — opcional para o jogador
+lod_enabled  = True    # L = ligar/desligar
+lod_strength = 1.0     # [ / ] = intensidade 0..1 (só quando ligado)
+prev_l       = False
+prev_lbr     = False   # [
+prev_rbr     = False   # ]
+
 # ---------------------------------------------------------------------------
 #  Geração Procedural
 #  Todas as funções usam random.Random(seed) local, garantindo que o
@@ -864,6 +911,7 @@ def draw():
                   "Infectou %d celulas" % pontos,
                   "ESPACO para a Fase 2")
     handle_space()
+    handle_lod()
     
 
 # ---------------------------------------------------------------------------
@@ -884,6 +932,30 @@ def handle_space():
         elif state == "win":
             reset_fase_2()
     prev_space = down
+
+# ---------------------------------------------------------------------------
+#  handle_lod  — Fase 2: L = toggle, [ / ] = intensidade
+# ---------------------------------------------------------------------------
+
+def handle_lod():
+    global lod_enabled, lod_strength, prev_l, prev_lbr, prev_rbr
+    if state != "fase2":
+        return
+
+    l_down = P5.keyIsDown(76)
+    if l_down and not prev_l:
+        lod_enabled = not lod_enabled
+    prev_l = l_down
+
+    lb_down = P5.keyIsDown(219)
+    if lb_down and not prev_lbr and lod_enabled:
+        lod_strength = max(0.0, lod_strength - 0.1)
+    prev_lbr = lb_down
+
+    rb_down = P5.keyIsDown(221)
+    if rb_down and not prev_rbr and lod_enabled:
+        lod_strength = min(1.0, lod_strength + 0.1)
+    prev_rbr = rb_down
 
 # ---------------------------------------------------------------------------
 #  Menu / telas estáticas — desenhadas direto no canvas WEBGL com texto 2D
@@ -1290,6 +1362,8 @@ def draw_fase_2():
     prog.setUniform("uObRad",      _to_js([float(v) for v in rads]))
     prog.setUniform("uObType",     _to_js([float(v) for v in types]))
     prog.setUniform("uHit",        float(hit_flash))
+    prog.setUniform("uLodEnable",  1.0 if lod_enabled else 0.0)
+    prog.setUniform("uLodStrength", float(lod_strength))
     set_virus_uniforms(prog, 1.0)
     P5.rect(0, 0, W, H)
 
@@ -1300,14 +1374,27 @@ def draw_fase_2():
 def draw_hud_f2():
     hud.clear()
     
-    # Cores temáticas (nariz/pele)
     hud.fill(255, 200, 100)
     hud.textSize(18)
     
-    # Lembre-se que agora usamos best_f2 em vez de best
     hud.text("DISTANCIA: %d m" % int(score), 16, 28)
-    hud.text("RECORDE:   %d m" % int(best_f2), 16, 50) 
+    hud.text("RECORDE:   %d m" % int(best_f2), 16, 50)
     hud.text("VEL: %d" % int(speed), W - 110, 28)
+
+    if lod_enabled:
+        hud.fill(180, 220, 180)
+        hud.textSize(14)
+        hud.text("LOD: ON  %d%%" % int(lod_strength * 100), 16, H - 42)
+        hud.fill(200, 180, 140)
+        hud.textSize(12)
+        hud.text("L = desligar  |  [ ] = intensidade", 16, H - 24)
+    else:
+        hud.fill(220, 180, 180)
+        hud.textSize(14)
+        hud.text("LOD: OFF (qualidade maxima)", 16, H - 32)
+        hud.fill(200, 180, 140)
+        hud.textSize(12)
+        hud.text("L = ligar LOD (melhora FPS)", 16, H - 14)
     
     P5.resetShader()
     P5.image(hud, -W / 2, -H / 2, W, H)
