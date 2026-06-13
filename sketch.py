@@ -27,6 +27,7 @@
 # TODO: Otimização do código e eventuais problemas de renderização (bugs/travamentos)
 # TODO: Melhorar documentação no repositório
 # TODO: Testar em diferentes ambientes (computadores)
+# TODO: ESC para pausar o jogo
 # ===========================================================================
 
 import math
@@ -154,6 +155,10 @@ uniform float uVirusSpikeW;     // Raio do bulbo na ponta
 uniform vec3  uVirusBodyCol;    // Cor do corpo (0..1)
 uniform vec3  uVirusSpikeCol;   // Cor da ponta dos espinhos (0..1)
 
+// LOD dos glóbulos brancos (opcional — controlado pelo jogador na Fase 2)
+uniform float uLodEnable;       // 0 = qualidade máxima, 1 = LOD ativo
+uniform float uLodStrength;     // 0..1 — intensidade do LOD quando ativo
+
 // ===========================================================================
 //  SDFs PRIMITIVAS (Signed Distance Fields - Campos de Distância com Sinal)
 //  Retornam a distância de um ponto 'p' até a superfície do objeto.
@@ -188,12 +193,29 @@ mat2 rot(float a){
   return mat2(c, -s, s, c); 
 }
 
-// Smooth Minimum (smin): Interpolação orgânica (blending) entre duas distâncias 'a' e 'b'.
+// Hash determinístico 0..1 (seed = typ por obstáculo)
+//  hash1 — Número pseudoaleatório determinístico
+//  Retorna um número pseudoaleatório entre 0 e 1, baseado no número 'n'
+float hash1(float n){
+  return fract(sin(n) * 43758.5453123);
+}
+
+// SDF de uma Cápsula: cilindro com extremos arredondados
+// entre os pontos 'a' e 'b'. Usada nas microvilosidades dos glóbulos brancos.
+float sdCapsule(vec3 p, vec3 a, vec3 b, float r){
+  vec3 pa = p - a, ba = b - a;
+  // p relativo a 'a'; eixo do segmento
+  float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+  // projeta p no segmento [0,1]
+  return length(pa - ba * h) - r;
+  // distância ao eixo, menos raio
+}
+// Smooth Minimum (smin): fusão orgânica entre duas distâncias.
 // O parâmetro 'k' controla a suavidade da transição/fusão.
 // Retorna a menor distância, suavizando a quina de junção.
 float smin(float a, float b, float k){
-  float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
-  return mix(b, a, h) - k * h * (1.0 - h);
+  float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0); // Percentual de mistura entre a e b, de 0 a 1
+  return mix(b, a, h) - k * h * (1.0 - h); // Interpolação entre a e b, de 0 a 1, com a suavidade controlada por k
 }
 
 // ===========================================================================
@@ -354,7 +376,7 @@ float mapScene(vec3 p, out float mat){
   
   // 3. Itera sobre todos os obstáculos ativos e encontra o que está mais próximo de 'p'
   for(int i = 0; i < MAX_OBS; i++){
-    if(i >= uObCount) break; // Sai do loop se atingir o total de obstáculos gerados
+    if(i >= uObCount) break;
     float od = obstacleSDF(p, uObRel[i], uObRad[i], uObType[i]);
     if(od < d){ 
       d = od; 
