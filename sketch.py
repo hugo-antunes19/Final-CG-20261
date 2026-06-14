@@ -16,7 +16,6 @@
 # TODO: Adicionar dificuldade para acelerar a velocidade do vírus e a quantidade de obstáculos
 # TODO: Adicionar 'meleca' na Fase 1 para ser mais realista
 # TODO: Adicionar animações sanguíneas para simular a corrente sanguínea na Fase 2
-# TODO: Melhorar os glóbulos brancos
 # TODO: Adicionar 'modo' desenvolvedor para controlarmos o vírus por completo para testar as fases (encostar nos obstáculos ou passar perto)
 # TODO: Adicionar pequeno tutorial no início do jogo, explicando como funciona cada fase e como jogar
 # TODO: Adicionar pontuação e temporizador para todo início de jogo
@@ -158,6 +157,8 @@ uniform vec3  uVirusSpikeCol;   // Cor da ponta dos espinhos (0..1)
 // LOD dos glóbulos brancos (opcional — controlado pelo jogador na Fase 2)
 uniform float uLodEnable;       // 0 = qualidade máxima, 1 = LOD ativo
 uniform float uLodStrength;     // 0..1 — intensidade do LOD quando ativo
+uniform float uHeartHz;         // Frequência cardíaca atual (Hz)
+uniform float uPulsePhase;      // Fase acumulada do pulso (radianos)
 
 // ===========================================================================
 //  SDFs PRIMITIVAS (Signed Distance Fields - Campos de Distância com Sinal)
@@ -439,29 +440,74 @@ vec3 calcNormal(vec3 p){
     mapDist(p + e.yyx) - mapDist(p - e.yyx)));
 }
 
+// heartPulse: forma fisiológica simplificada (sístole rápida + diástole lenta).
+// Retorna um envelope 0..1 com dois componentes:
+//   - pico principal curto (contração ventricular)
+//   - ressalto pequeno posterior (reflexão de onda)
+float heartPulse(float phase){
+  float cyc = fract(phase / 6.28318530718);
+  float systole = smoothstep(0.03, 0.12, cyc) * (1.0 - smoothstep(0.18, 0.42, cyc));
+  float dicrotic = smoothstep(0.46, 0.55, cyc) * (1.0 - smoothstep(0.62, 0.85, cyc));
+  return clamp(systole * 1.00 + dicrotic * 0.34, 0.0, 1.0);
+}
+
 // ===========================================================================
 //  SOMBREAMENTO E PROCEDURAIS VISUAIS
 // ===========================================================================
-
-// tunnelColor: Gera a textura e a iluminação pulsante do túnel epitelial
+// Revisar a cor do túnel para melhorar a iluminação e a visibilidade do fluxo sanguíneo
+// tunnelColor: fluxo sanguíneo procedural com realismo sutil (laminar + pulso)
 vec3 tunnelColor(vec3 p){
-  // Coordenadas absolutas somando o deslocamento do jogador e avanço da câmera
+  // Coordenadas absolutas no vaso
+  // uPlayer.x e uPlayer.y são as coordenadas do jogador no vaso
+  // uCamZ é a posição Z da câmera
   float wx = p.x + uPlayer.x;
   float wy = p.y + uPlayer.y;
   float wz = p.z + uCamZ;
-  
-  // Efeito de grade/sulcos procedurais na parede (estética de vasos biológicos)
-  // gx e gy geram faixas transversais e longitudinais usando funções fract e smoothstep
-  float gx = smoothstep(0.06, 0.0, abs(fract(wz * 0.18) - 0.5) - 0.44);
-  float gy = smoothstep(0.06, 0.0, abs(fract(atan(wy, wx) * 1.27) - 0.5) - 0.44);
-  
-  vec3 base = vec3(0.35, 0.05, 0.05);  // Cor base: vermelho escuro vascular
-  vec3 glow = vec3(0.5, 0.08, 0.05) * (gx + gy); // Emissão de luz avermelhada nos sulcos da grade
-  
-  // Pulso Cardíaco: Uma onda de luz senoidal que viaja no eixo Z oposto à câmera
-  // Dá a sensação de que o coração está batendo e empurrando o sangue
-  glow += vec3(0.6, 0.1, 0.05) * smoothstep(0.85, 1.0, sin(p.z * 0.12 - uTime * 4.0) * 0.5 + 0.5) * 0.6;
-  return base + glow;
+
+  // Parâmetros de tuning fino (estilo biomédico sutil)
+  const float FLOW_STRENGTH   = 0.35;  // Intensidade das faixas de fluxo laminar (mix base→warm)
+  const float SWIRL_STRENGTH  = 0.0001;  // Quanto o padrão helicoidal modula o fluxo ao longo da parede
+  const float PULSE_STRENGTH  = 0.24;  // Brilho aditivo da onda de pulso cardíaco na parede
+  const float PLASMA_STRENGTH = 0.07;  // Microvariação de brilho do plasma (textura fina, baixo contraste)
+
+  float ang = atan(wy, wx);
+  float rad = length(vec2(wx, wy));
+  float invRad = 1.0 / max(rad, 0.001);
+
+  // Camadas longitudinais com advecção no sentido do fluxo
+  float z1 = wz * 0.20 - uTime * 2.00; // Faixa de fluxo 1 (onda principal)
+  float z2 = wz * 0.37 - uTime * 3.10; // Faixa de fluxo 2 (onda secundária)
+  float z3 = wz * 0.11 - uTime * 1.25; // Faixa de fluxo 3 (onda terciária)
+
+  // Componente helicoidal suave (escoamento com leve rotação ao longo da parede)
+  float swirl = sin(ang * 5.0 + z1 * 0.9) * 0.5 + 0.5;
+  float lam1  = sin(z1 + sin(ang * 2.4 + z2 * 0.35) * 0.45) * 0.5 + 0.5;
+  float lam2  = sin(z2 + cos(ang * 3.8 - z1 * 0.28) * 0.30) * 0.5 + 0.5;
+  float lam3  = sin(z3 + ang * 1.6) * 0.5 + 0.5;
+  float flow  = (lam1 * 0.48 + lam2 * 0.34 + lam3 * 0.18);
+  flow = mix(flow, flow * (0.82 + 0.18 * swirl), SWIRL_STRENGTH);
+
+  // Onda de pressão fisiológica viajando no eixo do vaso.
+  // A fase local combina batimento global + atraso espacial ao longo de z.
+  float vesselLag = wz * 0.16 + ang * 0.22;
+  float pMain = heartPulse(uPulsePhase - vesselLag);
+  float pSoft = heartPulse(uPulsePhase * 0.6 - vesselLag);
+  float hrNorm = clamp((uHeartHz - 1.10) / 0.90, 0.0, 1.0);
+  float pulse = mix(pSoft, pMain, 0.75) * (0.72 + 0.10 * hrNorm + 0.22 * invRad * TUNNEL_HALF);
+
+  // Microvariação de plasma de baixo contraste
+  float plasma = sin(wz * 0.05 + ang * 9.0 + uTime * 0.55) *
+                 sin(wz * 0.07 - ang * 6.5 - uTime * 0.43) * 0.5 + 0.5;
+
+  // Pulso cardíaco também "empurra" o padrão do fluxo, aumentando legibilidade do batimento
+  float flowPulse = clamp(FLOW_STRENGTH * flow + pulse * (0.08 + 0.06 * hrNorm), 0.0, 1.0);
+
+  vec3 base = vec3(0.30, 0.043, 0.043);
+  vec3 warm = vec3(0.43, 0.078, 0.052);
+  vec3 col = mix(base, warm, flowPulse);
+  col *= 1.0 + PLASMA_STRENGTH * (plasma - 0.5 + pulse * 0.12);
+  col += vec3(0.24, 0.05, 0.034) * (PULSE_STRENGTH * pulse);
+  return col;
 }
 
 // ===========================================================================
@@ -732,6 +778,8 @@ speed     = 18.0
 score     = 0.0
 best_f2   = 0.0
 hit_flash = 0.0
+heart_hz_f2    = 1.25   # ~75 BPM inicial
+pulse_phase_f2 = 0.0
 
 # LOD glóbulos brancos (Fase 2) — opcional para o jogador
 lod_enabled  = True    # L = ligar/desligar
@@ -856,6 +904,7 @@ def reset_fase_1():
 def reset_fase_2():
     """Reinicia a Fase 2: zera posição, velocidade e score."""
     global cam_z_f2, px_f2, py_f2, speed, score, hit_flash, state
+    global heart_hz_f2, pulse_phase_f2
 
     P5.camera()
     P5.perspective()
@@ -863,6 +912,8 @@ def reset_fase_2():
     cam_z_f2 = px_f2 = py_f2 = 0.0
     speed = 18.0
     score = hit_flash = 0.0
+    heart_hz_f2 = 1.25
+    pulse_phase_f2 = 0.0
     state = "fase2"
 
 # ---------------------------------------------------------------------------
@@ -1313,6 +1364,7 @@ def draw_hud_f1_inline():
 
 def draw_fase_2():
     global cam_z_f2, px_f2, py_f2, speed, score, best_f2, hit_flash, state
+    global heart_hz_f2, pulse_phase_f2
 
     dt = min(0.05, P5.deltaTime / 1000.0)
 
@@ -1333,6 +1385,13 @@ def draw_fase_2():
     score     = cam_z_f2
     if score > best_f2:
         best_f2 = score
+
+    # BPM adaptativo pela velocidade (66 -> 120 BPM) com suavização temporal.
+    speed_t = (speed - 18.0) / (60.0 - 18.0)
+    speed_t = max(0.0, min(1.0, speed_t))
+    target_hz = _lerp(1.10, 2.00, speed_t)
+    heart_hz_f2 = _lerp(heart_hz_f2, target_hz, min(1.0, dt * 2.3))
+    pulse_phase_f2 = (pulse_phase_f2 + heart_hz_f2 * dt * math.tau) % math.tau
 
     # Posição real do vírus = camera + VIRUS_Z (8.0 do shader)
     virus_z = cam_z_f2 + 8.0
@@ -1364,6 +1423,8 @@ def draw_fase_2():
     prog.setUniform("uHit",        float(hit_flash))
     prog.setUniform("uLodEnable",  1.0 if lod_enabled else 0.0)
     prog.setUniform("uLodStrength", float(lod_strength))
+    prog.setUniform("uHeartHz",    float(heart_hz_f2))
+    prog.setUniform("uPulsePhase", float(pulse_phase_f2))
     set_virus_uniforms(prog, 1.0)
     P5.rect(0, 0, W, H)
 
@@ -1380,6 +1441,7 @@ def draw_hud_f2():
     hud.text("DISTANCIA: %d m" % int(score), 16, 28)
     hud.text("RECORDE:   %d m" % int(best_f2), 16, 50)
     hud.text("VEL: %d" % int(speed), W - 110, 28)
+    hud.text("BPM: %d" % int(heart_hz_f2 * 60.0), W - 110, 50)
 
     if lod_enabled:
         hud.fill(180, 220, 180)
