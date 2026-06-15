@@ -17,16 +17,12 @@
 # TODO: Adicionar 'meleca' na Fase 1 para ser mais realista
 # TODO: Adicionar animações sanguíneas para simular a corrente sanguínea na Fase 2
 # TODO: Adicionar 'modo' desenvolvedor para controlarmos o vírus por completo para testar as fases (encostar nos obstáculos ou passar perto)
-# TODO: Adicionar pequeno tutorial no início do jogo, explicando como funciona cada fase e como jogar
-# TODO: Adicionar pontuação e temporizador para todo início de jogo
 # TODO: Adicionar som que altera de fase em fase
-# TODO: Adicionar tela de game over com pontuação e tempo
 # TODO: Implementar Fase 3
 # TODO: Adicionar transição de tela entre fases mais complexa
 # TODO: Otimização do código e eventuais problemas de renderização (bugs/travamentos)
 # TODO: Melhorar documentação no repositório
 # TODO: Testar em diferentes ambientes (computadores)
-# TODO: ESC para pausar o jogo
 # ===========================================================================
 
 import math
@@ -104,6 +100,61 @@ VIRUS_SPIKES_MIN = 3      # Espinhos no início
 VIRUS_SPIKES_MAX = 10     # Espinhos ao completar a Fase 1
 
 # ---------------------------------------------------------------------------
+#  Sistema de Dificuldade — Presets configuráveis
+#  Para criar um novo nível: insira uma entrada no dicionário.
+#  Chaves obrigatórias: nome, cilios_ring, cilio_spc, pontos, speed_ini
+# ---------------------------------------------------------------------------
+DIFFICULTY_PRESETS = {
+    0: {"nome": "Facil",   "cilios_ring": 2, "cilio_spc": 180.0, "pontos": 3, "speed_ini": 12.0},
+    1: {"nome": "Normal",  "cilios_ring": 4, "cilio_spc": 120.0, "pontos": 5, "speed_ini": 18.0},
+    2: {"nome": "Dificil", "cilios_ring": 6, "cilio_spc":  80.0, "pontos": 7, "speed_ini": 24.0},
+}
+
+# ---------------------------------------------------------------------------
+#  Conteúdo do Tutorial — slides navegáveis com ← →
+#  Para documentar uma nova fase: adicione um dict a esta lista.
+#  Chaves: titulo (str), corpo (list[str]), dica (str)
+# ---------------------------------------------------------------------------
+TUTORIAL_SLIDES = [
+    {
+        "titulo": "FASE 1 - Tunel Epitelial",
+        "corpo": [
+            "Voce e um retrovirus tentando infectar",
+            "as celulas do tecido nasal do hospedeiro.",
+            "",
+            "  > Infecte as celulas para avancar",
+            "  > Desvie dos cilios ou e game over",
+            "  > Mova-se com WASD ou setas",
+        ],
+        "dica": "Dica: os cilios balancam — antecipe o movimento!",
+    },
+    {
+        "titulo": "FASE 2 - Corrente Sanguinea",
+        "corpo": [
+            "Voce penetrou na corrente sanguinea!",
+            "",
+            "  > Desvie de hemacias e globulos brancos",
+            "  > A velocidade aumenta com o tempo",
+            "  > Sobreviva o maximo possivel!",
+            "",
+        ],
+        "dica": "Dica: globulos brancos sao maiores — use as bordas!",
+    },
+    {
+        "titulo": "CONTROLES",
+        "corpo": [
+            "  Mover:             WASD  /  Setas",
+            "  Pausar:            ESC",
+            "  Confirmar/Iniciar: ESPACO ou ENTER",
+            "  Avancar (debug):   ENTER  (na Fase 1)",
+            "",
+            "  Fase 2: L = toggle LOD  |  [ ] = intensidade",
+        ],
+        "dica": "",
+    },
+]
+
+# ---------------------------------------------------------------------------
 #  Shaders Fase 2
 # ---------------------------------------------------------------------------
 VERT = """
@@ -112,7 +163,11 @@ attribute vec3 aPosition;
 void main() {
   vec4 p = vec4(aPosition, 1.0);
   p.xy = p.xy * 2.0 - 1.0;
-  gl_Position = p;
+  // z=0.9999 => quad encostado no far plane (depth ~0.99995). O HUD desenhado
+  // depois (profundidade menor) passa GL_LESS e fica por cima — mesma situação
+  // dos menus, onde o depth está limpo em ~1.0. Feito no VERT (e não com
+  // gl_FragDepth) para não depender da extensão GL_EXT_frag_depth.
+  gl_Position = vec4(p.xy, 0.9999, 1.0);
 }
 """
 
@@ -131,6 +186,16 @@ void main() {
 FRAG = """
 precision highp float;
 #define MAX_OBS 8
+
+#define TUNNEL_BEAT_AMP 0.24   // quanto a parede afunila no batimento (unidades do shader)
+#define TUNNEL_BEAT_LAG 0.05   // atraso por unidade de z -> onda longa (respira sem sulco)
+
+// Batimento GLOBAL de tela (sincronizado com o lub-dub) — torna o coração legível
+#define BEAT_ZOOM      0.12    // empurrão de zoom da câmera a cada batida
+#define BEAT_EXPOSURE  0.16    // brilho global some/volta no batimento
+#define BEAT_REDDEN    0.06    // realce avermelhado no batimento
+#define VIGN_BASE      0.16    // vinheta de borda constante (enquadra o vaso)
+#define VIGN_BEAT      0.55    // vinheta extra que pulsa nas bordas no batimento
 
 // ===========================================================================
 //  VARIÁVEIS UNIFORMS (Inputs enviados pela aplicação Python/p5.js)
@@ -194,11 +259,18 @@ mat2 rot(float a){
   return mat2(c, -s, s, c); 
 }
 
-// Hash determinístico 0..1 (seed = typ por obstáculo)
-//  hash1 — Número pseudoaleatório determinístico
-//  Retorna um número pseudoaleatório entre 0 e 1, baseado no número 'n'
+// hash1 — PRNG determinístico via LCG (gerador congruencial linear),
+// o mesmo algoritmo clássico de rand()/minstd (C, Java, ...):
+//   X_{n+1} = (a * X_n + c) mod m
+// Constantes a=75, c=74, m=65537 (LCG do ZX Spectrum) mantêm todo produto
+// abaixo de 2^24, garantindo aritmética inteira EXATA em highp float — um
+// módulo estilo 2^31 perderia precisão no produto a*X. Retorna 0..1.
 float hash1(float n){
-  return fract(sin(n) * 43758.5453123);
+  float s = mod(floor(abs(n) * 100.0), 65537.0) + 1.0; // semente inteira 1..65537
+  s = mod(75.0 * s + 74.0, 65537.0);                   // 3 iterações do LCG
+  s = mod(75.0 * s + 74.0, 65537.0);                   // melhoram a difusão (avalanche)
+  s = mod(75.0 * s + 74.0, 65537.0);
+  return s / 65537.0;
 }
 
 // SDF de uma Cápsula: cilindro com extremos arredondados
@@ -304,6 +376,9 @@ float obstacleSDF(vec3 p, vec3 center, float r, float typ){
   return sdGlobuloBranco(rp, r * 1.2, typ, lod);
 }
 
+// Protótipo: heartPulse é definido mais abaixo, mas tunnelSDF já o usa.
+float heartPulse(float phase);
+
 // SDF do Túnel (Vaso Sanguíneo):
 // Representado por um cilindro infinito ao longo do eixo Z.
 // É deslocado pelas coordenadas do jogador (uPlayer.x, uPlayer.y), fazendo com que
@@ -311,9 +386,18 @@ float obstacleSDF(vec3 p, vec3 center, float r, float typ){
 float tunnelSDF(vec3 p){
   float wx = p.x + uPlayer.x;
   float wy = p.y + uPlayer.y;
+  float wz = p.z + uCamZ;
+
+  // Raio do vaso pulsando: sístole afunila a parede, diástole relaxa de volta.
+  // O atraso em wz faz a constrição VIAJAR ao longo do eixo (onda de pressão),
+  // coincidindo com o pulso de brilho de tunnelColor.
+  float beat = heartPulse(uPulsePhase - wz * TUNNEL_BEAT_LAG);
+  float r    = TUNNEL_HALF - TUNNEL_BEAT_AMP * beat;
+
   // Distância invertida: quanto mais perto do raio interno, menor a distância.
-  // TUNNEL_HALF é o raio interno máximo do túnel.
-  return TUNNEL_HALF - length(vec2(wx, wy));
+  // Fator < 1: o raio varia ao longo de z, então encolhemos um pouco o passo do
+  // sphere-tracing para evitar overshoot/artefatos na parede.
+  return (r - length(vec2(wx, wy))) * 0.9;
 }
 
 // SDF do Vírus (Jogador na Fase 2):
@@ -440,73 +524,72 @@ vec3 calcNormal(vec3 p){
     mapDist(p + e.yyx) - mapDist(p - e.yyx)));
 }
 
-// heartPulse: forma fisiológica simplificada (sístole rápida + diástole lenta).
-// Retorna um envelope 0..1 com dois componentes:
-//   - pico principal curto (contração ventricular)
-//   - ressalto pequeno posterior (reflexão de onda)
+// thump: pulso percussivo nítido (gaussiana estreita) centrado em 'center'.
+// Ataque/decaimento rápidos dão a sensação de "soco" do batimento, não de onda lenta.
+float thump(float cyc, float center, float w){
+  float d = cyc - center;
+  return exp(-d * d / (w * w));
+}
+
+// heartPulse: ritmo cardíaco "lub-dub" (S1 + S2) seguido de diástole em repouso.
+// Retorna um envelope 0..1:
+//   - S1 ("lub"): contração ventricular, forte e curta
+//   - S2 ("dub"): fechamento das válvulas semilunares, mais fraco, logo após
+//   - resto do ciclo: diástole (parede relaxada, sem brilho)
 float heartPulse(float phase){
   float cyc = fract(phase / 6.28318530718);
-  float systole = smoothstep(0.03, 0.12, cyc) * (1.0 - smoothstep(0.18, 0.42, cyc));
-  float dicrotic = smoothstep(0.46, 0.55, cyc) * (1.0 - smoothstep(0.62, 0.85, cyc));
-  return clamp(systole * 1.00 + dicrotic * 0.34, 0.0, 1.0);
+  float s1 = thump(cyc, 0.10, 0.052);          // "lub" — sístole
+  float s2 = thump(cyc, 0.27, 0.048) * 0.55;   // "dub" — segundo som, mais fraco
+  return clamp(s1 + s2, 0.0, 1.0);
+}
+
+// vnoise: ruído de valor 2D suave (interpolação cúbica de hash1).
+// Base de textura orgânica usada pela parede do vaso.
+float vnoise(vec2 p){
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  float a = hash1(dot(i + vec2(0.0, 0.0), vec2(1.0, 57.0)));
+  float b = hash1(dot(i + vec2(1.0, 0.0), vec2(1.0, 57.0)));
+  float c = hash1(dot(i + vec2(0.0, 1.0), vec2(1.0, 57.0)));
+  float d = hash1(dot(i + vec2(1.0, 1.0), vec2(1.0, 57.0)));
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
 // ===========================================================================
 //  SOMBREAMENTO E PROCEDURAIS VISUAIS
 // ===========================================================================
-// Revisar a cor do túnel para melhorar a iluminação e a visibilidade do fluxo sanguíneo
-// tunnelColor: fluxo sanguíneo procedural com realismo sutil (laminar + pulso)
+// tunnelColor: parede do vaso = mosaico endotelial + fluxo de plasma + pulso cardíaco
 vec3 tunnelColor(vec3 p){
-  // Coordenadas absolutas no vaso
-  // uPlayer.x e uPlayer.y são as coordenadas do jogador no vaso
-  // uCamZ é a posição Z da câmera
+  // Coordenadas absolutas na parede do vaso (mundo)
   float wx = p.x + uPlayer.x;
   float wy = p.y + uPlayer.y;
   float wz = p.z + uCamZ;
-
-  // Parâmetros de tuning fino (estilo biomédico sutil)
-  const float FLOW_STRENGTH   = 0.35;  // Intensidade das faixas de fluxo laminar (mix base→warm)
-  const float SWIRL_STRENGTH  = 0.0001;  // Quanto o padrão helicoidal modula o fluxo ao longo da parede
-  const float PULSE_STRENGTH  = 0.24;  // Brilho aditivo da onda de pulso cardíaco na parede
-  const float PLASMA_STRENGTH = 0.07;  // Microvariação de brilho do plasma (textura fina, baixo contraste)
-
   float ang = atan(wy, wx);
-  float rad = length(vec2(wx, wy));
-  float invRad = 1.0 / max(rad, 0.001);
 
-  // Camadas longitudinais com advecção no sentido do fluxo
-  float z1 = wz * 0.20 - uTime * 2.00; // Faixa de fluxo 1 (onda principal)
-  float z2 = wz * 0.37 - uTime * 3.10; // Faixa de fluxo 2 (onda secundária)
-  float z3 = wz * 0.11 - uTime * 1.25; // Faixa de fluxo 3 (onda terciária)
+  // Tuning (estilo biomédico sutil)
+  const float TISSUE_STRENGTH = 0.45; // peso do mosaico de tecido no mix de cor
+  const float FLOW_STRENGTH   = 0.18; // peso das faixas de plasma escorrendo
+  const float PULSE_STRENGTH  = 0.26; // brilho do batimento na parede (reforço; o global domina)
 
-  // Componente helicoidal suave (escoamento com leve rotação ao longo da parede)
-  float swirl = sin(ang * 5.0 + z1 * 0.9) * 0.5 + 0.5;
-  float lam1  = sin(z1 + sin(ang * 2.4 + z2 * 0.35) * 0.45) * 0.5 + 0.5;
-  float lam2  = sin(z2 + cos(ang * 3.8 - z1 * 0.28) * 0.30) * 0.5 + 0.5;
-  float lam3  = sin(z3 + ang * 1.6) * 0.5 + 0.5;
-  float flow  = (lam1 * 0.48 + lam2 * 0.34 + lam3 * 0.18);
-  flow = mix(flow, flow * (0.82 + 0.18 * swirl), SWIRL_STRENGTH);
+  // 1. Mosaico endotelial: grão fino de tecido (3 oitavas, alta frequência)
+  float tissue = vnoise(vec2(ang * 11.0, wz * 2.4)) * 0.5
+               + vnoise(vec2(ang * 23.0, wz * 5.2)) * 0.3
+               + vnoise(vec2(ang * 47.0, wz * 10.5)) * 0.2;
 
-  // Onda de pressão fisiológica viajando no eixo do vaso.
-  // A fase local combina batimento global + atraso espacial ao longo de z.
-  float vesselLag = wz * 0.16 + ang * 0.22;
-  float pMain = heartPulse(uPulsePhase - vesselLag);
-  float pSoft = heartPulse(uPulsePhase * 0.6 - vesselLag);
+  // 2. Fluxo laminar: faixas de plasma alongadas no sentido do vaso (advectadas em z)
+  float flow = vnoise(vec2(ang * 8.0, wz * 0.12 - uTime * 0.6));
+
+  // 3. Onda de pulso cardíaco viajando pelo eixo (atraso espacial em z e ângulo)
+  float lag    = wz * 0.16 + ang * 0.22;
   float hrNorm = clamp((uHeartHz - 1.10) / 0.90, 0.0, 1.0);
-  float pulse = mix(pSoft, pMain, 0.75) * (0.72 + 0.10 * hrNorm + 0.22 * invRad * TUNNEL_HALF);
+  float pulse  = heartPulse(uPulsePhase - lag) * (0.85 + 0.15 * hrNorm);
 
-  // Microvariação de plasma de baixo contraste
-  float plasma = sin(wz * 0.05 + ang * 9.0 + uTime * 0.55) *
-                 sin(wz * 0.07 - ang * 6.5 - uTime * 0.43) * 0.5 + 0.5;
-
-  // Pulso cardíaco também "empurra" o padrão do fluxo, aumentando legibilidade do batimento
-  float flowPulse = clamp(FLOW_STRENGTH * flow + pulse * (0.08 + 0.06 * hrNorm), 0.0, 1.0);
-
-  vec3 base = vec3(0.30, 0.043, 0.043);
-  vec3 warm = vec3(0.43, 0.078, 0.052);
-  vec3 col = mix(base, warm, flowPulse);
-  col *= 1.0 + PLASMA_STRENGTH * (plasma - 0.5 + pulse * 0.12);
-  col += vec3(0.24, 0.05, 0.034) * (PULSE_STRENGTH * pulse);
+  // Composição: variação fina e de baixo contraste em torno de uma cor base
+  vec3 deep  = vec3(0.32, 0.050, 0.046); // tecido em sombra
+  vec3 flesh = vec3(0.44, 0.078, 0.058); // tecido iluminado
+  vec3 col   = mix(deep, flesh, clamp(tissue * TISSUE_STRENGTH + flow * FLOW_STRENGTH + 0.25, 0.0, 1.0));
+  col += vec3(0.28, 0.06, 0.045) * (pulse * PULSE_STRENGTH);
   return col;
 }
 
@@ -517,9 +600,13 @@ void main(){
   // Normaliza as coordenadas da tela (UV de -0.5 a 0.5 no eixo menor)
   vec2 uv = (gl_FragCoord.xy - 0.5 * uResolution) / uResolution.y;
 
+  // Batimento global na fase da câmera (sem atraso espacial): a tela inteira
+  // pulsa em uníssono, que é o que faz o efeito "ler" como um coração.
+  float beatCam = heartPulse(uPulsePhase);
+
   // Configuração da câmera virtual (Ray Generation)
-  vec3 ro = vec3(0.0);                          // Origem do raio (Ray Origin) na posição local da câmera
-  vec3 rd = normalize(vec3(uv, 1.45));          // Direção do raio (Ray Direction) inclinando-se para o plano Z
+  vec3 ro = vec3(0.0);                                    // Origem do raio (Ray Origin) na posição local da câmera
+  vec3 rd = normalize(vec3(uv, 1.45 + BEAT_ZOOM * beatCam)); // z maior no batimento => leve "soco" de zoom
 
   float t = 0.0;        // Distância total percorrida pelo raio (Ray Marching Step)
   float mat = 0.0;      // Armazenará a ID do material atingido
@@ -574,21 +661,32 @@ void main(){
     }
     
     // Efeito de Névoa Volumétrica (Fog):
-    // Conforme a distância 't' aumenta, mistura a cor do objeto com o escuro de fundo
-    // Simula a opacidade da corrente sanguínea cheia de plasma denso
+    // Conforme a distância 't' aumenta, mistura a cor do objeto com a profundidade
+    // do vaso. O alvo é um vermelho-escuro de tecido (não preto), então a "garganta"
+    // do vaso recua como uma penumbra avermelhada em vez de um halo preto.
     float fog = 1.0 - exp(-t * 0.022);
-    col = mix(col, vec3(0.08, 0.01, 0.01), fog);
+    col = mix(col, vec3(0.16, 0.025, 0.025), fog);
   } else {
-    // Fundo escuro avermelhado (profundidade oculta do vaso onde o raio se perdeu)
-    col = vec3(0.08, 0.01, 0.01);
+    // Fundo: profundidade oculta do vaso (vermelho-escuro de tecido)
+    col = vec3(0.16, 0.025, 0.025);
   }
 
   // Efeito de Flash Vermelho:
   // Quando colide com obstáculos, a tela pisca em vermelho de acordo com uHit
   col = mix(col, vec3(0.9, 0.05, 0.05), uHit * 0.6);
 
+  // ---- Batimento cardíaco global (lub-dub) ----
+  // A cada batida: o quadro clareia, ganha um realce avermelhado e as bordas
+  // escurecem (vinheta pulsante), reproduzindo a sensação de pressão sanguínea.
+  col *= 1.0 + BEAT_EXPOSURE * beatCam;
+  col += vec3(BEAT_REDDEN, 0.0, 0.0) * beatCam;
+  float r2 = dot(uv, uv);
+  float vignette = 1.0 - VIGN_BASE * r2 - VIGN_BEAT * beatCam * r2;
+  col *= clamp(vignette, 0.0, 1.0);
+
   // Correção Gamma: Converte a cor linear para espaço sRGB padrão de exibição
   col = pow(col, vec3(0.4545));   // 1.0 / 2.2 aprox.
+  // Profundidade do quad é definida no vertex shader (z=0.999); o HUD fica por cima.
   gl_FragColor = vec4(col, 1.0);
 }
 """
@@ -630,14 +728,16 @@ def get_cilio(indice_anel, indice_cilio):
     if key not in cilio_cache:
         # Gerador local com seed determinística — mesmo anel/cílio = mesmo resultado
         rng    = random.Random((indice_anel * 997 + indice_cilio * 31 + SEED) & 0xFFFFFFFF)
-        posicao_z = indice_anel * CILIO_SPACING
+        # Usa eff_cilio_spacing (sobrescrita pela dificuldade) em vez da constante fixa
+        posicao_z = indice_anel * eff_cilio_spacing
         
         # Espaçamento espiral: cada anel é girado 30° em relação ao anterior.
         # Isso evita que cílios de anéis vizinhos se alinhem.
         giro_espiral = indice_anel * math.radians(30)
         
-        # Ângulo final = posição base (0°, 90°, 180°, 270°) + giro espiral + ruído
-        angulo = (indice_cilio / CILIOS_PER_RING) * math.tau + giro_espiral + rng.uniform(-0.15, 0.15)
+        # Ângulo final = posição base + giro espiral + ruído
+        # Usa eff_cilios_per_ring para distribuição angular correta por dificuldade
+        angulo = (indice_cilio / max(1, eff_cilios_per_ring)) * math.tau + giro_espiral + rng.uniform(-0.15, 0.15)
         
         comprimento = rng.uniform(CILIO_LEN * 0.5, CILIO_LEN)
         fase = rng.uniform(0, math.tau)
@@ -655,12 +755,13 @@ def collect_visible_cilios():
     """
     z_inicio = cam_z_f1 - 50.0
     z_fim = cam_z_f1 + VIEW_DIST
-    anel_inicio = max(0, int(z_inicio // CILIO_SPACING))
-    anel_fim = int(z_fim // CILIO_SPACING) + 1
+    # Usa variáveis efetivas de dificuldade (eff_cilio_spacing, eff_cilios_per_ring)
+    anel_inicio = max(0, int(z_inicio // eff_cilio_spacing))
+    anel_fim = int(z_fim // eff_cilio_spacing) + 1
     return [
         ((anel, cilio), *get_cilio(anel, cilio))
         for anel in range(anel_inicio, anel_fim)
-        for cilio in range(CILIOS_PER_RING)
+        for cilio in range(eff_cilios_per_ring)
     ]
 
 # ---------------------------------------------------------------------------
@@ -759,8 +860,7 @@ prog = None     # Shader GLSL compilado (createShader) — usado na Fase 2
 hud  = None     # Buffer 2D auxiliar (createGraphics) — para textos sobre WEBGL
 W = H = 0       # Largura e altura do canvas
 
-state = "start"
-prev_space = False
+state = "menu"   # Estados: menu | tutorial | config | fase1 | fase2 | win | pausa | over
 
 # Fase 1
 cam_z_f1        = 0.0
@@ -787,6 +887,46 @@ lod_strength = 1.0     # [ / ] = intensidade 0..1 (só quando ligado)
 prev_l       = False
 prev_lbr     = False   # [
 prev_rbr     = False   # ]
+
+# ---------------------------------------------------------------------------
+#  Variáveis Efetivas de Dificuldade
+#  Atualizadas por apply_difficulty() a cada reset de fase.
+#  Não modificar diretamente — use DIFFICULTY_PRESETS.
+# ---------------------------------------------------------------------------
+eff_cilios_per_ring   = CILIOS_PER_RING
+eff_cilio_spacing     = CILIO_SPACING
+eff_pontos_para_fase2 = PONTOS_PARA_FASE2
+eff_speed_ini_f2      = 18.0
+
+# ---------------------------------------------------------------------------
+#  Configurações Mutáveis (persistem durante a sessão)
+# ---------------------------------------------------------------------------
+difficulty  = 1          # Índice do preset ativo em DIFFICULTY_PRESETS
+config_sel  = 0          # Item selecionado na tela de config (0=dific., 1=LOD on/off, 2=LOD int.)
+
+# ---------------------------------------------------------------------------
+#  Timers por fase — dict extensível: adicione a chave ao criar nova fase
+# ---------------------------------------------------------------------------
+timers      = {"fase1": 0.0, "fase2": 0.0}   # Tempo acumulado em cada fase (s)
+timer_total = 0.0                              # Soma dos timers no momento do game over
+
+# ---------------------------------------------------------------------------
+#  Navegação de Menus — edge detection independente por tecla
+# ---------------------------------------------------------------------------
+menu_sel      = 0            # Item selecionado no menu principal (0=Jogar, 1=Tutorial, 2=Config)
+pausa_sel     = 0            # Item selecionado no menu de pausa (0=Retomar, 1=Reiniciar, 2=Menu)
+tutorial_page = 0            # Página atual do tutorial (0-based)
+prev_up       = False        # Edge detection: seta para cima
+prev_down     = False        # Edge detection: seta para baixo
+prev_left     = False        # Edge detection: seta para esquerda
+prev_right    = False        # Edge detection: seta para direita
+prev_enter    = False        # Edge detection: ENTER / ESPAÇO
+prev_esc      = False        # Edge detection: ESC
+
+# ---------------------------------------------------------------------------
+#  Estado de Pausa
+# ---------------------------------------------------------------------------
+state_antes_pausa = None     # Estado salvo para retomar após pausa
 
 # ---------------------------------------------------------------------------
 #  Geração Procedural
@@ -888,17 +1028,21 @@ def collect_obstacles():
 def reset_fase_1():
     """Reinicia a Fase 1: zera posição, pontos e limpa cache de cílios."""
     global cam_z_f1, px_f1, py_f1, pontos, collected_cells, state
-    global cilio_cache, cilio_nodes
+    global cilio_cache, cilio_nodes, score
 
-    cilio_cache.clear()   # Limpa cache para regenerar cílios
-    cilio_nodes.clear()   # Limpa nós de física
+    apply_difficulty()        # Aplica preset de dificuldade
+    cilio_cache.clear()       # Limpa cache para regenerar cílios (novo eff_cilio_spacing)
+    cilio_nodes.clear()       # Limpa nós de física
     
-    P5.camera()           # Restaura câmera padrão
-    P5.perspective()      # Restaura projeção padrão
+    P5.camera()               # Restaura câmera padrão
+    P5.perspective()          # Restaura projeção padrão
 
     cam_z_f1 = px_f1 = py_f1 = 0.0
     pontos = 0
+    score = 0.0
     collected_cells = set()
+    timers["fase1"] = 0.0     # Zera timer da Fase 1
+    timers["fase2"] = 0.0     # Zera timer da Fase 2
     state = "fase1"
 
 def reset_fase_2():
@@ -906,14 +1050,17 @@ def reset_fase_2():
     global cam_z_f2, px_f2, py_f2, speed, score, hit_flash, state
     global heart_hz_f2, pulse_phase_f2
 
+    apply_difficulty()        # Aplica preset de dificuldade
+
     P5.camera()
     P5.perspective()
 
     cam_z_f2 = px_f2 = py_f2 = 0.0
-    speed = 18.0
-    score = hit_flash = 0.0
-    heart_hz_f2 = 1.25
+    speed          = eff_speed_ini_f2   # Velocidade inicial pelo preset de dificuldade
+    score          = hit_flash = 0.0
+    heart_hz_f2    = 1.25
     pulse_phase_f2 = 0.0
+    timers["fase2"] = 0.0    # Zera timer da Fase 2
     state = "fase2"
 
 # ---------------------------------------------------------------------------
@@ -922,67 +1069,137 @@ def reset_fase_2():
 
 def setup():
     """Cria canvas WEBGL, compila o shader e inicializa o buffer de HUD."""
-    global prog, hud, W, H
+    global prog, hud, W, H, overlay_div
     P5.createCanvas(900, 600, P5.WEBGL)  # Canvas 3D com WebGL
     P5.pixelDensity(1)                    # 1 pixel real = 1 pixel do canvas
     W, H = P5.width, P5.height
     prog = P5.createShader(VERT, FRAG)    # Compila os shaders GLSL
     hud = P5.createGraphics(W, H)         # Buffer 2D para textos (HUD)
+    
+    # Abordagem alternativa para HUD Global (Placar HTML nativo imune ao WebGL)
+    overlay_div = None
+    try:
+        from js import document
+        overlay_div = document.createElement("div")
+        overlay_div.id = "global_hud_overlay"
+        overlay_div.style.position = "absolute"
+        overlay_div.style.top = "20px"
+        overlay_div.style.right = "20px"
+        overlay_div.style.color = "#FFD278"
+        overlay_div.style.fontFamily = "monospace"
+        overlay_div.style.fontSize = "18px"
+        overlay_div.style.backgroundColor = "rgba(20,8,10,0.8)"
+        overlay_div.style.padding = "12px"
+        overlay_div.style.borderRadius = "8px"
+        overlay_div.style.pointerEvents = "none"
+        overlay_div.style.zIndex = "9999"
+        overlay_div.style.display = "none"
+        overlay_div.style.border = "1px solid rgba(255,255,255,0.2)"
+        
+        # Anexa diretamente ao body para posicionamento absoluto perfeito
+        document.body.appendChild(overlay_div)
+    except:
+        pass
 
 # ---------------------------------------------------------------------------
 #  draw
 # ---------------------------------------------------------------------------
 
 def draw():
-
     P5.background(220, 180, 140)
 
-    if state == "start":
-        draw_menu("RETROVIRUS",
-                  "Fase 1: O Tunel Epitelial",
-                  "ESPACO para comecar")
+    # Despacho por estado — para adicionar novo estado: inclua elif aqui e em _nav_action
+    if   state == "menu":     draw_menu_principal()
+    elif state == "tutorial": draw_tutorial()
+    elif state == "config":   draw_config()
+    elif state == "fase1":    push(); draw_fase_1(); pop()
+    elif state == "fase2":    push(); draw_fase_2(); pop()
+    elif state == "win":      draw_win_screen()
+    elif state == "pausa":    draw_pausa()
+    elif state == "over":     draw_game_over()
 
-    elif state == "fase1":
-        push()
-        draw_fase_1()
-        pop()
+    handle_esc()        # ESC: pausa / retorno a menus
+    handle_menu_nav()   # ↑↓←→ + ENTER: navegação em menus
+    handle_lod()        # L / [ ]: controle de LOD durante Fase 2
 
-    elif state == "fase2":
-        push()
-        draw_fase_2()
-        pop()
+    # Atualiza DOM overlay HUD (Pontuação Global e Timer)
+    global overlay_div
+    if 'overlay_div' in globals() and overlay_div:
+        try:
+            if state in ("fase1", "fase2", "pausa"):
+                pt_total = int(pontos * 100 + score)
+                tempo = _fmt_time(timers["fase1"] + timers["fase2"])
+                overlay_div.innerHTML = f"<b>PONTUAÇÃO GLOBAL:</b> {pt_total}<br><br><b>TEMPO TOTAL:</b> {tempo}"
+                overlay_div.style.display = "block"
+                
+                # Prende o overlay perfeitamente dentro do canto superior direito do canvas
+                from js import document, window
+                canvas_elt = document.querySelector("canvas")
+                if canvas_elt:
+                    rect = canvas_elt.getBoundingClientRect()
+                    abs_top = window.scrollY + rect.top
+                    abs_left = window.scrollX + rect.left
+                    
+                    overlay_div.style.top = f"{abs_top + 20}px"
+                    overlay_div.style.left = f"{abs_left + rect.width - 20}px"
+                    overlay_div.style.right = "auto"
+                    overlay_div.style.transform = "translateX(-100%)"
+            else:
+                overlay_div.style.display = "none"
+        except:
+            pass
 
-    elif state == "over":
-        draw_menu("COLISAO!",
-                  "Infectou %d celulas" % pontos,
-                  "ESPACO para reiniciar")
-
-    elif state == "win":
-        draw_menu("FASE 1 COMPLETA!",
-                  "Infectou %d celulas" % pontos,
-                  "ESPACO para a Fase 2")
-    handle_space()
-    handle_lod()
-    
 
 # ---------------------------------------------------------------------------
-#  handle_space  — edge detection, só ESPAÇO
+#  handle_esc — pausa, retorno a menus (edge detection)
 # ---------------------------------------------------------------------------
 
-def handle_space():
-    global prev_space
-    # comeca/reinicia com ESPACO ou qualquer tecla de movimento
-    down = (P5.keyIsDown(32)
-            or P5.keyIsDown(P5.LEFT_ARROW) or P5.keyIsDown(65)
-            or P5.keyIsDown(P5.RIGHT_ARROW) or P5.keyIsDown(68)
-            or P5.keyIsDown(P5.UP_ARROW) or P5.keyIsDown(87)
-            or P5.keyIsDown(P5.DOWN_ARROW) or P5.keyIsDown(83))
-    if down and not prev_space:
-        if state in ("start", "over"):
-            reset_fase_1()
-        elif state == "win":
-            reset_fase_2()
-    prev_space = down
+def handle_esc():
+    """Gerencia a tecla ESC para pausa e retorno a menus."""
+    global state, state_antes_pausa, pausa_sel, prev_esc
+    esc   = P5.keyIsDown(27)
+    esc_p = esc and not prev_esc
+
+    if esc_p:
+        if state in ("fase1", "fase2"):
+            state_antes_pausa = state   # Salva o estado para retomar
+            pausa_sel         = 0
+            state             = "pausa"
+        elif state == "pausa":
+            state = state_antes_pausa   # Retoma de onde parou
+        elif state in ("tutorial", "config", "win", "over"):
+            state = "menu"
+
+    prev_esc = esc
+
+
+# ---------------------------------------------------------------------------
+#  handle_menu_nav — navegação de menus com edge detection
+# ---------------------------------------------------------------------------
+
+def handle_menu_nav():
+    """Gerencia navegação em todos os estados de menu (edge detection)."""
+    global prev_up, prev_down, prev_left, prev_right, prev_enter
+
+    up    = P5.keyIsDown(P5.UP_ARROW)
+    down  = P5.keyIsDown(P5.DOWN_ARROW)
+    left  = P5.keyIsDown(P5.LEFT_ARROW)
+    right = P5.keyIsDown(P5.RIGHT_ARROW)
+    enter = P5.keyIsDown(13) or P5.keyIsDown(32)   # ENTER ou ESPAÇO
+
+    up_p    = up    and not prev_up
+    down_p  = down  and not prev_down
+    left_p  = left  and not prev_left
+    right_p = right and not prev_right
+    enter_p = enter and not prev_enter
+
+    # Só despacha em estados de menu — estados de jogo gerenciam próprias teclas
+    if state in ("menu", "tutorial", "config", "win", "over", "pausa"):
+        _nav_action(up_p, down_p, left_p, right_p, enter_p)
+
+    prev_up,    prev_down  = up,   down
+    prev_left,  prev_right = left, right
+    prev_enter = enter
 
 # ---------------------------------------------------------------------------
 #  handle_lod  — Fase 2: L = toggle, [ / ] = intensidade
@@ -1051,6 +1268,549 @@ def draw_menu(title, line2, line3):
     # Carimba o buffer na tela WEBGL
     P5.image(hud, -W / 2, -H / 2, W, H)
 
+# ==============================================================================
+#  SISTEMA DE UI — Helpers, Dificuldade, Timer, Navegação e Telas
+#  Estrutura modular: adicione novas telas seguindo o padrão existente.
+# ==============================================================================
+
+# ---------------------------------------------------------------------------
+#  Helpers de HUD — compartilhados por todas as telas de UI
+# ---------------------------------------------------------------------------
+
+def _fmt_time(seconds):
+    """Formata um tempo em segundos para a string 'M:SS'."""
+    s = int(seconds)
+    return "%d:%02d" % (s // 60, s % 60)
+
+def _hud_setup():
+    """Prepara o canvas WEBGL para renderização 2D via buffer HUD."""
+    P5.resetShader()
+    P5.camera()
+    P5.perspective()
+
+def _hud_stamp():
+    """Carimba o buffer HUD na tela e restaura a projeção 3D."""
+    P5.image(hud, -W / 2, -H / 2, W, H)
+    P5.perspective(P5.PI / 3.6, float(W) / float(H), 1.0, 5000.0)
+
+def _clear_depth_buffer():
+    """Limpa SOMENTE o depth buffer do canvas WEBGL (mantém a cor já renderizada)."""
+    for getter in (
+        lambda: getattr(P5, 'drawingContext', None),
+        lambda: getattr(P5._renderer, 'GL', None),
+        lambda: getattr(P5._renderer, 'drawingContext', None),
+    ):
+        try:
+            gl = getter()
+            if gl is not None:
+                gl.clear(256)  # 256 = gl.DEPTH_BUFFER_BIT no WebGL
+                return
+        except Exception:
+            pass
+
+def _hud_panel(cx, cy, w, h, r=10):
+    """Desenha um painel com fundo escuro e borda sutil no buffer HUD.
+
+    Parâmetros:
+        cx, cy -- centro do painel (pixels do HUD)
+        w, h   -- largura e altura
+        r      -- raio dos cantos arredondados
+    """
+    hud.fill(35, 12, 20, 225)
+    hud.stroke(160, 70, 90, 160)
+    hud.strokeWeight(1.5)
+    hud.rect(cx - w / 2, cy - h / 2, w, h, r)
+    hud.noStroke()
+
+# ---------------------------------------------------------------------------
+#  Sistema de Dificuldade e Timer
+# ---------------------------------------------------------------------------
+
+def apply_difficulty():
+    """Aplica o preset de dificuldade selecionado nas variáveis efetivas.
+
+    Lê DIFFICULTY_PRESETS[difficulty] e sobrescreve as variáveis eff_*.
+    Chamada a cada reset de fase — não modifica as constantes originais.
+    Para adicionar novo nível: inserir entrada em DIFFICULTY_PRESETS.
+    """
+    global eff_cilios_per_ring, eff_cilio_spacing, eff_pontos_para_fase2, eff_speed_ini_f2
+    p = DIFFICULTY_PRESETS[difficulty]
+    eff_cilios_per_ring   = p["cilios_ring"]
+    eff_cilio_spacing     = p["cilio_spc"]
+    eff_pontos_para_fase2 = p["pontos"]
+    eff_speed_ini_f2      = p["speed_ini"]
+
+def update_timer(phase_key, dt):
+    """Acumula delta time no timer da fase ativa.
+
+    Parâmetros:
+        phase_key -- chave no dict 'timers' (ex: "fase1", "fase2", "fase3")
+        dt        -- delta time em segundos do frame atual
+    Para adicionar nova fase: basta registrar a chave em 'timers' no estado global.
+    """
+    if phase_key in timers:
+        timers[phase_key] += dt
+
+# ---------------------------------------------------------------------------
+#  Navegação Interna dos Menus
+# ---------------------------------------------------------------------------
+
+def _ir_para_tutorial():
+    """Abre o tutorial resetando para o primeiro slide."""
+    global state, tutorial_page
+    tutorial_page = 0
+    state = "tutorial"
+
+def _ir_para_config():
+    """Abre a tela de configurações resetando a seleção."""
+    global state, config_sel
+    config_sel = 0
+    state = "config"
+
+def _config_change_value(going_left):
+    """Altera o valor do item selecionado na tela de configurações.
+
+    Parâmetros:
+        going_left -- True se ← foi pressionada, False se →
+    """
+    global difficulty, lod_enabled, lod_strength
+    n_diff = len(DIFFICULTY_PRESETS)
+    if config_sel == 0:        # Dificuldade
+        step = -1 if going_left else 1
+        difficulty = (difficulty + step) % n_diff
+    elif config_sel == 1:      # LOD on/off
+        lod_enabled = not lod_enabled
+    elif config_sel == 2:      # LOD intensidade (só quando ativo)
+        if lod_enabled:
+            lod_strength = max(0.0, min(1.0, lod_strength + (-0.1 if going_left else 0.1)))
+
+def _confirm_pausa():
+    """Executa a ação selecionada no menu de pausa."""
+    global state
+    if pausa_sel == 0:          # Retomar
+        state = state_antes_pausa
+    elif pausa_sel == 1:        # Reiniciar fase
+        if   state_antes_pausa == "fase1": reset_fase_1()
+        elif state_antes_pausa == "fase2": reset_fase_2()
+        else:                              state = state_antes_pausa
+    elif pausa_sel == 2:        # Menu principal
+        state = "menu"
+
+def _nav_action(up_p, down_p, left_p, right_p, enter_p):
+    """Despacha a ação de navegação para o estado de menu atual.
+
+    Para adicionar suporte a novo estado de menu:
+      1. Adicione um elif com a lógica de navegação desse estado.
+      2. Adicione o estado à lista em handle_menu_nav().
+    """
+    global state, menu_sel, tutorial_page, config_sel, pausa_sel
+
+    if state == "menu":
+        MENU_COUNT = 3
+        if up_p:   menu_sel = (menu_sel - 1) % MENU_COUNT
+        if down_p: menu_sel = (menu_sel + 1) % MENU_COUNT
+        if enter_p:
+            if   menu_sel == 0: reset_fase_1()
+            elif menu_sel == 1: _ir_para_tutorial()
+            elif menu_sel == 2: _ir_para_config()
+
+    elif state == "tutorial":
+        n = len(TUTORIAL_SLIDES)
+        if right_p: tutorial_page = min(tutorial_page + 1, n - 1)
+        if left_p:  tutorial_page = max(tutorial_page - 1, 0)
+        if enter_p: state = "menu"
+
+    elif state == "config":
+        CONFIG_COUNT = 3
+        if up_p:   config_sel = (config_sel - 1) % CONFIG_COUNT
+        if down_p: config_sel = (config_sel + 1) % CONFIG_COUNT
+        if (left_p or right_p): _config_change_value(left_p)
+        if enter_p: state = "menu"
+
+    elif state == "win":
+        if enter_p: reset_fase_2()
+
+    elif state == "over":
+        if enter_p: reset_fase_1()
+
+    elif state == "pausa":
+        PAUSA_COUNT = 3
+        if up_p:   pausa_sel = (pausa_sel - 1) % PAUSA_COUNT
+        if down_p: pausa_sel = (pausa_sel + 1) % PAUSA_COUNT
+        if enter_p: _confirm_pausa()
+
+# ---------------------------------------------------------------------------
+#  Menu Principal — estado "menu"
+# ---------------------------------------------------------------------------
+
+def draw_menu_principal():
+    """Tela de menu principal com logo animado, navegação e melhor pontuação."""
+    _hud_setup()
+    hud.clear()
+
+    # Fundo escuro avermelhado
+    hud.noStroke()
+    hud.fill(15, 5, 10, 245)
+    hud.rect(0, 0, W, H)
+
+    cx = W / 2
+    t  = P5.millis() / 1000.0
+    pulse = 0.96 + 0.04 * math.sin(t * 1.8)
+
+    hud.textAlign(P5.CENTER, P5.CENTER)
+
+    # Título com sombra e pulso suave
+    hud.fill(80, 10, 20, 180)
+    hud.textSize(int(54 * pulse))
+    hud.text("RETROVIRUS", cx + 2, H * 0.21 + 2)
+    hud.fill(255, 80, 80)
+    hud.textSize(int(54 * pulse))
+    hud.text("RETROVIRUS", cx, H * 0.21)
+
+    # Subtítulo
+    hud.fill(200, 140, 140)
+    hud.textSize(14)
+    hud.text("Computacao Grafica — 2026/1", cx, H * 0.21 + 42)
+
+    # Separador
+    hud.stroke(150, 60, 70, 120)
+    hud.strokeWeight(1)
+    hud.line(cx - 120, H * 0.36, cx + 120, H * 0.36)
+    hud.noStroke()
+
+    # Itens do menu
+    MENU_ITEMS = ["JOGAR", "TUTORIAL", "CONFIGURACOES"]
+    base_y, spc_y = H * 0.44, 46
+
+    for i, label in enumerate(MENU_ITEMS):
+        y = base_y + i * spc_y
+        sel = (i == menu_sel)
+        if sel:
+            hud.fill(120, 30, 40, 200)
+            hud.rect(cx - 130, y - 16, 260, 32, 6)
+            hud.fill(255, 130, 130)
+            hud.textSize(19)
+            hud.text("> " + label + " <", cx, y + 2)
+        else:
+            hud.fill(180, 120, 120)
+            hud.textSize(16)
+            hud.text(label, cx, y + 2)
+
+    # Melhor pontuação histórica da sessão
+    if best_f2 > 0 or best_f1 > 0:
+        hud.fill(180, 140, 70, 210)
+        hud.textSize(13)
+        hud.text("Melhor — F1: %d cel   F2: %dm" % (best_f1, int(best_f2)), cx, H * 0.83)
+
+    # Rodapé de navegação
+    hud.fill(120, 85, 85, 200)
+    hud.textSize(13)
+    hud.text("↑ ↓  navegar   |   ENTER / ESPACO confirmar", cx, H - 16)
+
+    hud.textAlign(P5.LEFT, P5.BASELINE)
+    _hud_stamp()
+
+# ---------------------------------------------------------------------------
+#  Tutorial — estado "tutorial"
+# ---------------------------------------------------------------------------
+
+def draw_tutorial():
+    """Exibe o tutorial em slides navegáveis com ← →.
+
+    O conteúdo vem de TUTORIAL_SLIDES (definido nas constantes).
+    Para adicionar slide de nova fase: inserir dict na lista.
+    """
+    _hud_setup()
+    hud.clear()
+
+    hud.noStroke()
+    hud.fill(12, 5, 15, 248)
+    hud.rect(0, 0, W, H)
+
+    slide = TUTORIAL_SLIDES[tutorial_page]
+    n     = len(TUTORIAL_SLIDES)
+    cx, cy = W / 2, H / 2
+
+    _hud_panel(cx, cy, 530, 350)
+
+    # Título do slide
+    hud.textAlign(P5.CENTER, P5.CENTER)
+    hud.fill(255, 165, 80)
+    hud.textSize(22)
+    hud.text(slide["titulo"], cx, cy - 138)
+
+    # Separador
+    hud.stroke(200, 110, 60, 100)
+    hud.strokeWeight(1)
+    hud.line(cx - 210, cy - 116, cx + 210, cy - 116)
+    hud.noStroke()
+
+    # Corpo do slide (linhas do array)
+    hud.fill(220, 205, 205)
+    hud.textSize(15)
+    for j, linha in enumerate(slide["corpo"]):
+        hud.text(linha, cx, cy - 88 + j * 24)
+
+    # Dica opcional
+    if slide.get("dica"):
+        hud.fill(140, 210, 130)
+        hud.textSize(13)
+        hud.text(slide["dica"], cx, cy + 112)
+
+    # Indicador de página
+    hud.fill(170, 130, 130)
+    hud.textSize(13)
+    hud.text("%d / %d" % (tutorial_page + 1, n), cx, cy + 135)
+
+    # Botões de navegação lateral
+    if tutorial_page > 0:
+        hud.fill(220, 185, 100)
+        hud.textSize(15)
+        hud.textAlign(P5.LEFT, P5.CENTER)
+        hud.text("← ANTERIOR", 30, H - 20)
+    if tutorial_page < n - 1:
+        hud.fill(220, 185, 100)
+        hud.textSize(15)
+        hud.textAlign(P5.RIGHT, P5.CENTER)
+        hud.text("PROXIMO →", W - 30, H - 20)
+
+    hud.textAlign(P5.CENTER, P5.CENTER)
+    hud.fill(120, 88, 88)
+    hud.textSize(13)
+    hud.text("ENTER / ESC = voltar ao menu", cx, H - 20)
+
+    hud.textAlign(P5.LEFT, P5.BASELINE)
+    _hud_stamp()
+
+# ---------------------------------------------------------------------------
+#  Configurações — estado "config"
+# ---------------------------------------------------------------------------
+
+def draw_config():
+    """Tela de configurações: dificuldade e LOD dos glóbulos brancos.
+
+    Para adicionar nova configuração:
+      1. Inserir entrada em CONFIG_ITEMS com (label, valor_str).
+      2. Adicionar case em _config_change_value() com o índice correspondente.
+      3. Incrementar CONFIG_COUNT em _nav_action() para "config".
+    """
+    _hud_setup()
+    hud.clear()
+
+    hud.noStroke()
+    hud.fill(12, 5, 15, 248)
+    hud.rect(0, 0, W, H)
+
+    cx, cy = W / 2, H / 2
+    _hud_panel(cx, cy, 490, 310)
+
+    hud.textAlign(P5.CENTER, P5.CENTER)
+    hud.fill(255, 165, 80)
+    hud.textSize(22)
+    hud.text("CONFIGURACOES", cx, cy - 126)
+
+    hud.stroke(200, 110, 60, 100)
+    hud.strokeWeight(1)
+    hud.line(cx - 195, cy - 106, cx + 195, cy - 106)
+    hud.noStroke()
+
+    lod_str = "ON"  if lod_enabled else "OFF"
+    lod_int = ("%d%%" % int(lod_strength * 100)) if lod_enabled else "—"
+    CONFIG_ITEMS = [
+        ("Dificuldade",     DIFFICULTY_PRESETS[difficulty]["nome"]),
+        ("LOD Globulos",    lod_str),
+        ("LOD Intensidade", lod_int),
+    ]
+
+    base_y = cy - 56
+    for i, (label, valor) in enumerate(CONFIG_ITEMS):
+        y = base_y + i * 52
+        sel = (i == config_sel)
+        if sel:
+            hud.fill(100, 25, 35, 190)
+            hud.rect(cx - 200, y - 17, 400, 34, 5)
+            hud.fill(255, 210, 100)
+            ts = 17
+        else:
+            hud.fill(170, 150, 150)
+            ts = 15
+
+        hud.textSize(ts)
+        hud.textAlign(P5.LEFT, P5.CENTER)
+        hud.text(label, cx - 180, y)
+        hud.textAlign(P5.RIGHT, P5.CENTER)
+        hud.text(("< " if sel else "") + valor + (" >" if sel else ""), cx + 180, y)
+
+    hud.textAlign(P5.CENTER, P5.CENTER)
+    hud.fill(120, 88, 88)
+    hud.textSize(13)
+    hud.text("↑ ↓  item   |   ← →  valor   |   ENTER / ESC voltar", cx, H - 16)
+
+    hud.textAlign(P5.LEFT, P5.BASELINE)
+    _hud_stamp()
+
+# ---------------------------------------------------------------------------
+#  Tela de Vitória — estado "win"
+# ---------------------------------------------------------------------------
+
+def draw_win_screen():
+    """Tela exibida ao completar a Fase 1, com resumo e instrução para avançar."""
+    _hud_setup()
+    hud.clear()
+
+    hud.noStroke()
+    hud.fill(12, 5, 15, 235)
+    hud.rect(0, 0, W, H)
+
+    cx, cy = W / 2, H / 2
+    _hud_panel(cx, cy, 430, 230)
+
+    hud.textAlign(P5.CENTER, P5.CENTER)
+
+    hud.fill(100, 255, 150)
+    hud.textSize(28)
+    hud.text("FASE 1 COMPLETA!", cx, cy - 86)
+
+    hud.stroke(80, 200, 120, 80)
+    hud.strokeWeight(1)
+    hud.line(cx - 170, cy - 62, cx + 170, cy - 62)
+    hud.noStroke()
+
+    hud.fill(220, 200, 180)
+    hud.textSize(16)
+    hud.text("Celulas infectadas: %d" % pontos, cx, cy - 34)
+    hud.text("Tempo da Fase 1:    %s"  % _fmt_time(timers["fase1"]), cx, cy - 8)
+
+    hud.stroke(160, 120, 80, 60)
+    hud.line(cx - 160, cy + 14, cx + 160, cy + 14)
+    hud.noStroke()
+
+    hud.fill(255, 200, 80)
+    hud.textSize(15)
+    hud.text("ESPACO / ENTER — entrar na Fase 2", cx, cy + 48)
+    hud.fill(140, 95, 95)
+    hud.textSize(13)
+    hud.text("ESC — voltar ao menu", cx, cy + 76)
+
+    hud.textAlign(P5.LEFT, P5.BASELINE)
+    _hud_stamp()
+
+# ---------------------------------------------------------------------------
+#  Tela de Game Over — estado "over"
+# ---------------------------------------------------------------------------
+
+def draw_game_over():
+    """Tela de game over com estatísticas completas da sessão."""
+    _hud_setup()
+    hud.clear()
+
+    hud.noStroke()
+    hud.fill(12, 2, 5, 240)
+    hud.rect(0, 0, W, H)
+
+    cx, cy = W / 2, H / 2
+    _hud_panel(cx, cy, 490, 330)
+
+    hud.textAlign(P5.CENTER, P5.CENTER)
+
+    hud.fill(255, 60, 60)
+    hud.textSize(32)
+    hud.text("COLISAO!", cx, cy - 140)
+
+    hud.stroke(200, 60, 60, 80)
+    hud.strokeWeight(1)
+    hud.line(cx - 195, cy - 116, cx + 195, cy - 116)
+    hud.noStroke()
+
+    hud.fill(220, 200, 200)
+    hud.textSize(15)
+    hud.text("Celulas infectadas:    %d"   % pontos,      cx, cy - 84)
+    hud.text("Distancia percorrida:  %dm"  % int(score),  cx, cy - 58)
+
+    hud.stroke(160, 80, 80, 60)
+    hud.line(cx - 165, cy - 36, cx + 165, cy - 36)
+    hud.noStroke()
+
+    hud.fill(180, 180, 165)
+    hud.textSize(14)
+    hud.text("Tempo F1: %s   |   Tempo F2: %s" % (
+        _fmt_time(timers["fase1"]), _fmt_time(timers["fase2"])), cx, cy - 10)
+    hud.text("Tempo total: %s" % _fmt_time(timer_total), cx, cy + 16)
+
+    # Melhor pontuação histórica da sessão
+    if best_f2 > 0 or best_f1 > 0:
+        hud.stroke(160, 135, 50, 80)
+        hud.line(cx - 165, cy + 38, cx + 165, cy + 38)
+        hud.noStroke()
+        hud.fill(225, 195, 80)
+        hud.textSize(14)
+        hud.text("★  Melhor — F1: %d cel   F2: %dm" % (
+            best_f1, int(best_f2)), cx, cy + 62)
+
+    hud.fill(200, 165, 100)
+    hud.textSize(14)
+    hud.text("ESPACO / ENTER — tentar novamente", cx, cy + 108)
+    hud.fill(140, 95, 95)
+    hud.textSize(13)
+    hud.text("ESC — voltar ao menu", cx, cy + 134)
+
+    hud.textAlign(P5.LEFT, P5.BASELINE)
+    _hud_stamp()
+
+# ---------------------------------------------------------------------------
+#  Overlay de Pausa — estado "pausa"
+# ---------------------------------------------------------------------------
+
+def draw_pausa():
+    """Overlay de pausa com três opções: Retomar, Reiniciar, Menu."""
+    _hud_setup()
+    hud.clear()
+
+    hud.noStroke()
+    hud.fill(5, 2, 8, 215)
+    hud.rect(0, 0, W, H)
+
+    cx, cy = W / 2, H / 2
+    _hud_panel(cx, cy, 370, 250)
+
+    hud.textAlign(P5.CENTER, P5.CENTER)
+
+    hud.fill(200, 220, 255)
+    hud.textSize(26)
+    hud.text("|| PAUSADO ||", cx, cy - 92)
+
+    hud.stroke(130, 150, 210, 80)
+    hud.strokeWeight(1)
+    hud.line(cx - 145, cy - 70, cx + 145, cy - 70)
+    hud.noStroke()
+
+    PAUSA_ITEMS = ["RETOMAR  (ESC / ESPACO)", "REINICIAR FASE", "MENU PRINCIPAL"]
+    base_y = cy - 30
+
+    for i, label in enumerate(PAUSA_ITEMS):
+        y = base_y + i * 46
+        sel = (i == pausa_sel)
+        if sel:
+            hud.fill(75, 55, 115, 190)
+            hud.rect(cx - 160, y - 15, 320, 30, 5)
+            hud.fill(200, 220, 255)
+            hud.textSize(16)
+        else:
+            hud.fill(145, 155, 195)
+            hud.textSize(14)
+        hud.text(label, cx, y)
+
+    hud.fill(95, 88, 118)
+    hud.textSize(12)
+    hud.text("↑ ↓  navegar   |   ENTER confirmar", cx, H - 16)
+
+    hud.textAlign(P5.LEFT, P5.BASELINE)
+    _hud_stamp()
+
+# ==============================================================================
+#  FIM DO SISTEMA DE UI
+# ==============================================================================
+
 # ------------------------------------------------------------------------------
 # Virus (Jogador)
 # ------------------------------------------------------------------------------
@@ -1084,9 +1844,11 @@ def virus_params(prog_t):
 
 def draw_fase_1():
     global cam_z_f1, px_f1, py_f1, pontos, best_f1, collected_cells, state
+    global timer_total
 
     t  = P5.millis() / 1000.0
     dt = min(0.05, P5.deltaTime / 1000.0)
+    update_timer("fase1", dt)   # Acumula tempo enquanto jogando
 
     mv = MOVE_SPEED_F1
 
@@ -1160,7 +1922,7 @@ def draw_fase_1():
     # =======================================================================
 
     #  Progressão visual (0.0 → 1.0 conforme células coletadas)
-    prog_t = min(1.0, pontos / PONTOS_PARA_FASE2)
+    prog_t = min(1.0, pontos / eff_pontos_para_fase2)   # usa preset de dificuldade
 
     draw_virus_f1(prog_t, t, px_f1, py_f1, cam_z_f1)
 
@@ -1171,8 +1933,9 @@ def draw_fase_1():
         return
 
     if hit_cilio:
+        timer_total = timers["fase1"]   # Congela total no momento do game over
         state = "over"
-    elif pontos >= PONTOS_PARA_FASE2:
+    elif pontos >= eff_pontos_para_fase2:
         state = "win"
 
 def draw_virus_f1(prog_t, t, px, py, cam_z):
@@ -1331,8 +2094,8 @@ def draw_hud_f1_inline():
     hud.rectMode(P5.CORNER)
     hud.rect(10, 10, 220, 65, 8)
 
-    # Barra de progresso (amarelo claro)
-    bw = 190.0 * (pontos / PONTOS_PARA_FASE2)
+    # Barra de progresso (usa eff_pontos_para_fase2 pelo preset de dificuldade)
+    bw = 190.0 * (pontos / eff_pontos_para_fase2)
     hud.fill(255, 220, 100)
     hud.rect(18, 38, bw, 14, 4)
 
@@ -1342,7 +2105,20 @@ def draw_hud_f1_inline():
     hud.textAlign(P5.LEFT, P5.TOP)
     hud.text("CELULAS INFECTADAS", 20, 12)
     hud.fill(255, 240, 180)
-    hud.text("%d / %d" % (pontos, PONTOS_PARA_FASE2), 20, 54)
+    hud.text("%d / %d" % (pontos, eff_pontos_para_fase2), 20, 54)
+
+    # Status global e Fase 1 (canto superior direito)
+    hud.textAlign(P5.RIGHT, P5.TOP)
+    
+    hud.fill(150, 100, 100, 180)
+    hud.rect(W - 170, 10, 160, 65, 8)
+
+    hud.fill(200, 240, 200)
+    hud.textSize(14)
+    tempo_str = _fmt_time(timers["fase1"] + timers["fase2"])
+    pontos_totais = pontos * 100 + int(score)
+    hud.text("TEMPO TOTAL: %s" % tempo_str, W - 20, 20)
+    hud.text("PONTUACAO: %d" % pontos_totais, W - 20, 44)
 
     hud.fill(200, 100, 120, 200)
     hud.textSize(13)
@@ -1351,11 +2127,18 @@ def draw_hud_f1_inline():
 
     hud.textAlign(P5.LEFT, P5.BASELINE)
 
-    # Carimba na tela sem afetar o 3D
+    # Carimba HUD sobre a cena 3D.
+    # A Fase 1 usa perspectiva do jogo (near=1, far=5000): geometria tem depth ≈0.99.
+    # O HUD com perspectiva padrão (near=52, far=5196) tem depth ≈0.909 < 0.99 → passa GL_LESS.
+    # P5.image deve ser chamado DIRETAMENTE sem manipulação de drawingContext
+    # (em Py5Script, drawingContext pode gerar exceção silenciosa e abortar a função.)
     P5.resetShader()
+    P5.camera()
+    P5.perspective()
+    P5.fill(255, 255, 255, 255)
     P5.image(hud, -W / 2, -H / 2, W, H)
 
-    # ← NOVO: restaura perspectiva 3D para o próximo frame
+    # Restaura perspectiva 3D para o próximo frame
     P5.perspective(P5.PI / 3.6, float(W) / float(H), 1.0, 5000.0)
 
 # ---------------------------------------------------------------------------
@@ -1364,9 +2147,10 @@ def draw_hud_f1_inline():
 
 def draw_fase_2():
     global cam_z_f2, px_f2, py_f2, speed, score, best_f2, hit_flash, state
-    global heart_hz_f2, pulse_phase_f2
+    global heart_hz_f2, pulse_phase_f2, timer_total
 
     dt = min(0.05, P5.deltaTime / 1000.0)
+    update_timer("fase2", dt)   # Acumula tempo enquanto jogando
 
     mv = 14.0 * dt
     if P5.keyIsDown(P5.LEFT_ARROW)  or P5.keyIsDown(65): px_f2 -= mv
@@ -1380,7 +2164,7 @@ def draw_fase_2():
         px_f2 = px_f2 / pdist * lim
         py_f2 = py_f2 / pdist * lim
 
-    speed     = min(60.0, 18.0 + cam_z_f2 * 0.02)
+    speed     = min(60.0, eff_speed_ini_f2 + cam_z_f2 * 0.02)   # velocidade pelo preset
     cam_z_f2 += speed * dt
     score     = cam_z_f2
     if score > best_f2:
@@ -1403,8 +2187,9 @@ def draw_fase_2():
         # Hitbox ajustada: hemácias são discos finos, glóbulos ~0.9r
         if abs(dz) < rad * 0.45:
             if math.hypot(cx - px_f2, cy - py_f2) < rad * 0.6 + SHIP_RADIUS_F2:
-                state     = "over"
-                hit_flash = 1.0
+                timer_total = timers["fase1"] + timers["fase2"]  # Congela total
+                state       = "over"
+                hit_flash   = 1.0
                 break
 
     if hit_flash > 0.0:
@@ -1426,6 +2211,7 @@ def draw_fase_2():
     prog.setUniform("uHeartHz",    float(heart_hz_f2))
     prog.setUniform("uPulsePhase", float(pulse_phase_f2))
     set_virus_uniforms(prog, 1.0)
+    P5.noStroke()              # Sem contorno: evita as bordas do quad virarem linhas no centro da tela
     P5.rect(0, 0, W, H)
 
     # HUD fase 2 via buffer 2D (necessário porque o shader ocupa tudo)
@@ -1433,33 +2219,78 @@ def draw_fase_2():
 
 
 def draw_hud_f2():
-    hud.clear()
-    
-    hud.fill(255, 200, 100)
-    hud.textSize(18)
-    
-    hud.text("DISTANCIA: %d m" % int(score), 16, 28)
-    hud.text("RECORDE:   %d m" % int(best_f2), 16, 50)
-    hud.text("VEL: %d" % int(speed), W - 110, 28)
-    hud.text("BPM: %d" % int(heart_hz_f2 * 60.0), W - 110, 50)
+    global pontos, score, timers, best_f2, speed, heart_hz_f2, lod_enabled, lod_strength
 
-    if lod_enabled:
-        hud.fill(180, 220, 180)
-        hud.textSize(14)
-        hud.text("LOD: ON  %d%%" % int(lod_strength * 100), 16, H - 42)
-        hud.fill(200, 180, 140)
-        hud.textSize(12)
-        hud.text("L = desligar  |  [ ] = intensidade", 16, H - 24)
-    else:
-        hud.fill(220, 180, 180)
-        hud.textSize(14)
-        hud.text("LOD: OFF (qualidade maxima)", 16, H - 32)
-        hud.fill(200, 180, 140)
-        hud.textSize(12)
-        hud.text("L = ligar LOD (melhora FPS)", 16, H - 14)
-    
+    hud.clear()
+    hud.textAlign(P5.LEFT, P5.TOP)
+    hud.noStroke()
+
+    try:
+        hud.fill(20, 8, 10, 170)
+        hud.rect(10, 12, 200, 72, 8)       # bloco esquerdo
+        hud.rect(W - 152, 12, 142, 98, 8)  # bloco direito
+
+        hud.fill(255, 210, 120)
+        hud.textSize(16)
+        pontos_totais = int(pontos * 100 + score)
+        hud.text("PONTUACAO: %d" % pontos_totais, 18, 18)
+        hud.text("DISTANCIA: %d m" % int(score), 18, 40)
+        hud.text("RECORDE:   %d m" % int(best_f2), 18, 62)
+        
+        hud.text("VEL: %d" % int(speed), W - 144, 18)
+        hud.text("BPM: %d" % int(heart_hz_f2 * 60.0), W - 144, 40)
+        hud.text("TEMPO F2: %s" % _fmt_time(timers["fase2"]), W - 144, 62)
+        
+        hud.fill(200, 240, 200)
+        tempo_str = _fmt_time(timers["fase1"] + timers["fase2"])
+        hud.text("T. TOTAL: %s" % tempo_str, W - 144, 84)
+
+        if lod_enabled:
+            hud.fill(180, 220, 180)
+            hud.textSize(14)
+            hud.text("LOD: ON  %d%%" % int(lod_strength * 100), 16, H - 42)
+            hud.fill(200, 180, 140)
+            hud.textSize(12)
+            hud.text("L = desligar  |  [ ] = intensidade", 16, H - 24)
+        else:
+            hud.fill(220, 180, 180)
+            hud.textSize(14)
+            hud.text("LOD: OFF (max)", 16, H - 32)
+            hud.fill(200, 180, 140)
+            hud.textSize(12)
+            hud.text("L = ligar LOD", 16, H - 14)
+            
+    except Exception as e:
+        hud.fill(255, 0, 0, 255)
+        hud.textSize(20)
+        hud.text("ERRO HUD: " + str(e), 20, 20)
+
+    hud.textAlign(P5.LEFT, P5.BASELINE)
+
+    # Carimba o HUD forçando a textura para contornar bugs do P5.image no WebGL
     P5.resetShader()
-    P5.image(hud, -W / 2, -H / 2, W, H)
+    P5.camera()
+    P5.perspective()
+
+    try:
+        gl = P5.drawingContext
+        gl.clear(256)      # DEPTH_BUFFER_BIT
+        gl.disable(2929)   # DEPTH_TEST
+    except:
+        pass
+
+    P5.noStroke()
+    P5.fill(255, 255, 255, 255)
+    P5.texture(hud)
+    P5.rect(-W / 2, -H / 2, W, H)
+
+    try:
+        gl = P5.drawingContext
+        gl.enable(2929)
+    except:
+        pass
+
+    P5.perspective(P5.PI / 3.6, float(W) / float(H), 1.0, 5000.0)
 
 def _lerp(a, b, x):
     return a + (b - a) * x
