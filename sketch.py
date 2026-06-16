@@ -13,7 +13,6 @@
 # ===========================================================================
 # TODOs Gerais
 # TODO: Corrigir colisão entre vírus e cílios, a hitbox parece estar inadequada
-# TODO: Adicionar dificuldade para acelerar a velocidade do vírus e a quantidade de obstáculos
 # TODO: Adicionar 'meleca' na Fase 1 para ser mais realista
 # TODO: Adicionar animações sanguíneas para simular a corrente sanguínea na Fase 2
 # TODO: Adicionar 'modo' desenvolvedor para controlarmos o vírus por completo para testar as fases (encostar nos obstáculos ou passar perto)
@@ -60,7 +59,6 @@ SEED             = 42       # Semente global para geração procedural determin�
 #  Constantes dos Cílios — Geometria e Física de Chicote
 #  Cílios são curvas de Bézier 3D que nascem na parede do túnel.
 #  São organizados em anéis ao longo do eixo Z, com distribuição espiral.
-#  A animação usa um sistema spring-damper (mola + amortecimento).
 # ---------------------------------------------------------------------------
 CILIO_SPACING    = 120.0    # Distância em Z entre anéis de cílios
 CILIOS_PER_RING  = 4        # Quantidade de cílios por anel (distribuídos em 360°)
@@ -363,7 +361,7 @@ float sdGlobuloBranco(vec3 p, float r, float seed, float lod){
 // 3. Escolhe a geometria correta baseada no tipo (typ < 3.14 representa hemácia)
 float obstacleSDF(vec3 p, vec3 center, float r, float typ){
   vec3 rp = p - center;
-  float ph = typ + uTime * 0.3;
+  float ph = typ + uTime * 0.7;
   if(typ < 3.14){
     // Hemácia: rotação suave (evita disco virar "linha" ou formas quebradas)
     rp.xz = rot(ph * 0.22) * rp.xz;
@@ -612,8 +610,9 @@ void main(){
   float mat = 0.0;      // Armazenará a ID do material atingido
   bool hit = false;     // Flag de colisão visual do raio
   
+  //TODO: Checar o melhor numero de passos para o raymarching, talvez seja necessário aumentar ou diminuir 
   // Loop de Raymarching (Máximo de 90 passos para bom equilíbrio de desempenho)
-  for(int i = 0; i < 70; i++){
+  for(int i = 0; i < 90; i++){
     vec3 p = ro + rd * t;        // Posição atual da ponta do raio
     float d = mapScene(p, mat);  // Consulta a SDF da cena
     if(d < 0.002){               // Se a distância for quase zero, atingiu a superfície (HIT!)
@@ -964,61 +963,116 @@ def collect_visible_cells():
     return resultado
 
 def make_obstacle(indice_obstaculo):
-    """Gera um obstáculo da Fase 2 (hemácia ou glóbulo branco).
+    """Gera um obstáculo da Fase 2 (hemácia ou glóbulo branco) com distribuição em anel.
 
-    30% chance de glóbulo branco (maior, typ >= 3.14).
-    70% chance de hemácia (menor, typ < 3.14).
-    Posição distribuída uniformemente dentro do círculo do vaso.
+    30% de chance de glóbulo branco (maior, typ >= 3.14).
+    70% de chance de hemácia (menor, typ < 3.14).
+    
+    Posição distribuída em formato de "rosquinha" (donut). 
+    As células nascem perto das bordas (30% a 92% do raio) para criar 
+    um corredor de fuga estratégico no centro do vaso sanguíneo.
 
-    O campo 'typ' serve duplo propósito:
-      - No shader: typ < 3.14 renderiza hemácia, >= 3.14 renderiza glóbulo
-      - Na colisão Python: não é usado diretamente
+    O campo 'tipo' (typ) serve duplo propósito:
+      - No shader: typ < 3.14 renderiza hemácia, >= 3.14 renderiza glóbulo.
+      - Na colisão Python: não é usado diretamente.
 
     Retorna: (posicao_z, centro_x, centro_y, raio, tipo)
     """
+
     rng = random.Random((indice_obstaculo * 2654435761) & 0xFFFFFFFF)
+
+    # 1. Definição do Tipo e Tamanho
     eh_globulo = rng.random() < 0.3
     if eh_globulo:
         raio = rng.uniform(2.5, 3.5)   # Glóbulos são maiores
     else:
         raio = rng.uniform(1.6, 2.8)   # Hemácias são menores
-    limite = TUNNEL_HALF - raio - 0.4   # Margem da parede
-    # Distribuição uniforme em disco: sqrt(random) corrige o viés para o centro
-    angulo = rng.uniform(0, math.tau)
-    dist_centro = limite * math.sqrt(rng.random())
-    centro_x = math.cos(angulo) * dist_centro
-    centro_y = math.sin(angulo) * dist_centro
+    
+    # Margem de segurança para a célula não atravessar a parede do vaso
+    limite = TUNNEL_HALF - raio - 0.4
+
+    # 2. Posição Base: Distribuição em anel (sem a raiz quadrada)
+    angulo_base = rng.uniform(0, math.tau)
+    # Sorteia a distância do centro, forçando a nascer entre 30% e 92% do limite
+    dist_centro = rng.uniform(limite * 0.3, limite * 0.92)  
+    centro_x_base = math.cos(angulo_base) * dist_centro
+    centro_y_base = math.sin(angulo_base) * dist_centro
+
+    # 3. Drift Espacial: Cria uma curva sinuosa na base do obstáculo
+    drift_amp = rng.uniform(0.8, 2.2)       # Força do desvio (amplitude)
+    drift_freq = rng.uniform(0.06, 0.14)    # Quantas curvas faz ao longo do eixo Z
+    drift_phase = rng.uniform(0, math.tau)  # Fase inicial aleatória
+    
+    # A direção do desvio é sempre 90 graus (pi/2) em relação ao centro,
+    # fazendo a célula orbitar sutilmente a parede do túnel
+    drift_ang = angulo_base + math.pi / 2   
+
+    z_base = OB_START + indice_obstaculo * SPACING
+    
+    # Aplica o desvio espacial usando o Z como tempo
+    drift = math.sin(z_base * drift_freq + drift_phase) * drift_amp
+    centro_x = centro_x_base + math.cos(drift_ang) * drift
+    centro_y = centro_y_base + math.sin(drift_ang) * drift
+
+    # 4. Clipping de Segurança
+    # Garante que, mesmo com o drift, o obstáculo nunca saia do vaso sanguíneo
+    dist = math.hypot(centro_x, centro_y)
+    if dist > limite:
+        centro_x = centro_x / dist * limite
+        centro_y = centro_y / dist * limite
+
     tipo = rng.uniform(3.15, 6.28) if eh_globulo else rng.uniform(0.0, 3.13)
-    return OB_START + indice_obstaculo * SPACING, centro_x, centro_y, raio, tipo
+    return z_base, centro_x, centro_y, raio, tipo
 
 def collect_obstacles():
-    """Coleta obstáculos visíveis e formata como arrays para o shader.
+    """Coleta obstáculos visíveis, aplica animação de flutuação e formata para o shader.
 
     Retorna:
-        rel   -- Lista flat de [x, y, z] relativos à câmera (até MAX_OBS * 3)
-        rads  -- Lista de raios (até MAX_OBS)
-        types -- Lista de tipos (até MAX_OBS)
-        count -- Quantidade real de obstáculos ativos
+        posicoes_relativas -- Lista flat de [x, y, z] relativas à câmera (até MAX_OBS * 3)
+        raios              -- Lista de raios (até MAX_OBS)
+        tipos              -- Lista de tipos (até MAX_OBS)
+        contagem           -- Quantidade real de obstáculos ativos na tela
     """
+
     indice_base = int((cam_z_f2 - OB_START) // SPACING)
     posicoes_relativas, raios, tipos = [], [], []
     contagem = 0
     n = max(0, indice_base - 1)
     while contagem < MAX_OBS and n < indice_base + MAX_OBS + 2:
         z, cx, cy, raio, tipo = make_obstacle(n)
-        dist_z = z - cam_z_f2  # Distância Z relativa à câmera
+        # Drift animado: oscilação adicional baseada no tempo 
+        # (cam_z_f2 como um "relógio" para animar as células vindo na sua direção)
+        rng2 = random.Random((n * 1234567 + 99) & 0xFFFFFFFF)
+        anim_amp   = rng2.uniform(0.3, 0.9)     # O quanto ela treme
+        anim_freq  = rng2.uniform(0.04, 0.10)   # O quão rápido ela treme
+        anim_phase = rng2.uniform(0, math.tau)  # Deslocamento inicial da tremida
+        anim_ang   = rng2.uniform(0, math.tau)  # Direção aleatória da tremida
+        
+        # O valor do seno sobe e desce com o avanço da câmera
+        anim = math.sin(cam_z_f2 * anim_freq + anim_phase) * anim_amp
+        cx += math.cos(anim_ang) * anim
+        cy += math.sin(anim_ang) * anim
+
+        # Distância Z relativa à câmera
+        dist_z = z - cam_z_f2
         n += 1
+
+        # Descarta obstáculos muito atrás da câmera (< -1.0) ou muito longe na névoa (> 150.0)
         if dist_z < -1.0 or dist_z > 150.0:
             continue
+
         posicoes_relativas.extend([cx - px_f2, cy - py_f2, dist_z])
         raios.append(raio)
         tipos.append(tipo)
         contagem += 1
-    # Preenche slots vazios com dados inertes (z=9999 = invisível no shader)
+    
+    # Preenche slots vazios dos arrays com dados inertes 
+    # (z=9999 garante que o obstáculo fique invisível no shader)
     while len(raios) < MAX_OBS:
         posicoes_relativas.extend([0.0, 0.0, 9999.0])
         raios.append(0.0)
         tipos.append(0.0)
+
     return posicoes_relativas, raios, tipos, contagem
 
 # ---------------------------------------------------------------------------
