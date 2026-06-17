@@ -37,39 +37,19 @@ except NameError:
 
 # ---------------------------------------------------------------------------
 #  Constantes Fase 1 — Túnel Epitelial
-#  O túnel é um cilindro de raio TUNNEL_RADIUS. O vírus (esfera de
-#  SHIP_RADIUS_F1) se move dentro dele, desviando de cílios e coletando
-#  células. Ao coletar PONTOS_PARA_FASE2 células, avança para a Fase 2.
 # ---------------------------------------------------------------------------
 TUNNEL_RADIUS    = 220.0    # Raio do cilindro do túnel (pixels)
 SHIP_RADIUS_F1   = 12.0     # Raio da hitbox do vírus na Fase 1 (pixels)
-SPEED_F1         = 3.5      # (não utilizado atualmente)
 MOVE_SPEED_F1    = 6.0      # Velocidade lateral do vírus (pixels/frame)
 FWD_SPEED_F1     = 5.5      # Velocidade de avanço/recuo no eixo Z (pixels/frame)
 
-CELL_SPACING     = 250.0    # Distância em Z entre células infectáveis
 CELL_RADIUS      = 22.0     # Raio visual da esfera de cada célula
 CELL_COL_DIST    = SHIP_RADIUS_F1 + CELL_RADIUS  # Distância de colisão vírus↔célula
 
-PONTOS_PARA_FASE2 = 5       # Células necessárias para completar a Fase 1
 VIEW_DIST        = 1200.0   # Distância máxima de renderização à frente da câmera
 SEED             = 42       # Semente global para geração procedural determinística
 
-# ---------------------------------------------------------------------------
-#  Constantes dos Cílios — Geometria e Física de Chicote
-#  Cílios são curvas de Bézier 3D que nascem na parede do túnel.
-#  São organizados em anéis ao longo do eixo Z, com distribuição espiral.
-# ---------------------------------------------------------------------------
-CILIO_SPACING    = 120.0    # Distância em Z entre anéis de cílios
-CILIOS_PER_RING  = 4        # Quantidade de cílios por anel (distribuídos em 360°)
-CILIO_LEN        = 110.0    # Comprimento máximo de um cílio (varia aleatoriamente)
 CILIO_RADIUS_COL = 14.0     # Raio de colisão da ponta do cílio
-
-WHIP_SEGS  = 4              # Segmentos da cadeia spring-damper (nós de física)
-WHIP_STIFF = 0.35           # Rigidez da mola (0=solto, 1=rígido)
-WHIP_DAMP  = 0.87           # Amortecimento da velocidade (0=sem, 1=para imediato)
-WHIP_FORCE = 0.5            # Amplitude máxima da força oscilatória na ponta
-WHIP_FREQ  = 1.2            # Frequência do balançar (Hz)
 
 # ---------------------------------------------------------------------------
 #  Constantes Fase 2 — Corrente Sanguínea (Raymarching SDF)
@@ -100,17 +80,33 @@ VIRUS_SPIKES_MAX = 10     # Espinhos ao completar a Fase 1
 # ---------------------------------------------------------------------------
 #  Sistema de Dificuldade — Presets configuráveis
 #  Para criar um novo nível: insira uma entrada no dicionário.
-#  Chaves obrigatórias: nome, cilios_ring, cilio_spc, pontos, speed_ini
 # ---------------------------------------------------------------------------
 DIFFICULTY_PRESETS = {
-    0: {"nome": "Facil",   "cilios_ring": 2, "cilio_spc": 180.0, "pontos": 3, "speed_ini": 12.0},
-    1: {"nome": "Normal",  "cilios_ring": 4, "cilio_spc": 120.0, "pontos": 5, "speed_ini": 18.0},
-    2: {"nome": "Dificil", "cilios_ring": 6, "cilio_spc":  80.0, "pontos": 7, "speed_ini": 24.0},
+    0: {"nome": "Facil",   
+        "fase1": {
+            "cilios_ring": 2, "cilio_spc": 180.0, "cilio_max_len": 110.0, "cell_spacing": 150.0, "pontos": 3
+            },
+        "fase2": {
+            "speed_ini": 12.0
+            }},
+    1: {"nome": "Normal",  
+        "fase1": {
+            "cilios_ring": 4, "cilio_spc": 120.0, "cilio_max_len": 130.0, "cell_spacing": 200.0, "pontos": 5
+            },
+        "fase2": {
+            "speed_ini": 18.0
+            }},
+    2: {"nome": "Dificil", 
+        "fase1": {
+            "cilios_ring": 6, "cilio_spc":  80.0, "cilio_max_len": 150.0, "cell_spacing": 250.0, "pontos": 7
+            },
+        "fase2": {
+            "speed_ini": 24.0
+            }},
 }
 
 # ---------------------------------------------------------------------------
 #  Conteúdo do Tutorial — slides navegáveis com ← →
-#  Para documentar uma nova fase: adicione um dict a esta lista.
 #  Chaves: titulo (str), corpo (list[str]), dica (str)
 # ---------------------------------------------------------------------------
 TUTORIAL_SLIDES = [
@@ -417,7 +413,6 @@ float tunnelSDF(vec3 p){
 // ===========================================================================
 
 // TODO: O vírus está feio, pensar em como melhorar o virus visualmente, talvez usando uma geometria mais complexa ou adicionando um efeito de brilho/halo para destacar o jogador
-// A sombra que o virus faz está esquisita, talvez seja necessário ajustar a iluminação ou a forma como o vírus é renderizado para melhorar a aparência geral
 // Talvez o virus nao devesse rodar totalmente, apenas no plano xy 
  
 #define VIRUS_Z    8.0
@@ -426,7 +421,6 @@ float tunnelSDF(vec3 p){
 float sdVirus(vec3 p){
   vec3 vp = p - vec3(0.0, 0.0, VIRUS_Z);
   vp.xy = rot(uTime * 0.18) * vp.xy;
-  vp.xz = rot(uTime * 0.10) * vp.xz;
  
   float R   = uVirusR;
   float sL  = uVirusSpikeLen;
@@ -710,14 +704,14 @@ def get_cilio(indice_anel, indice_cilio):
     """Retorna os dados geométricos de um cílio, criando-o se necessário.
 
     Os cílios são organizados em anéis ao longo do eixo Z do túnel.
-    Cada anel tem CILIOS_PER_RING cílios distribuídos em 360°.
+    Cada anel tem eff_cilios_per_ring cílios distribuídos em 360°.
     Anéis consecutivos são girados 30° entre si (espiral), evitando
     que cílios de anéis vizinhos fiquem alinhados.
 
     Parâmetros:
         indice_anel   -- Qual anel no eixo Z (0, 1, 2, ...). Anel i
-                         está na posição Z = i * CILIO_SPACING.
-        indice_cilio  -- Qual cílio dentro do anel (0 a CILIOS_PER_RING-1).
+                         está na posição Z = i * eff_cilio_spacing.
+        indice_cilio  -- Qual cílio dentro do anel (0 a eff_cilios_per_ring-1).
                          Cílio j fica no ângulo base = j/total * 360°.
 
     Retorna:
@@ -738,7 +732,7 @@ def get_cilio(indice_anel, indice_cilio):
         # Usa eff_cilios_per_ring para distribuição angular correta por dificuldade
         angulo = (indice_cilio / max(1, eff_cilios_per_ring)) * math.tau + giro_espiral + rng.uniform(-0.15, 0.15)
         
-        comprimento = rng.uniform(CILIO_LEN * 0.5, CILIO_LEN)
+        comprimento = rng.uniform(eff_cilio_max_length * 0.5, eff_cilio_max_length)
         fase = rng.uniform(0, math.tau)
         cilio_cache[key] = (posicao_z, angulo, comprimento, fase)
     return cilio_cache[key]
@@ -758,7 +752,7 @@ def collect_visible_cilios():
     anel_inicio = max(0, int(z_inicio // eff_cilio_spacing))
     anel_fim = int(z_fim // eff_cilio_spacing) + 1
     return [
-        ((anel, cilio), *get_cilio(anel, cilio))
+        (get_cilio(anel, cilio))
         for anel in range(anel_inicio, anel_fim)
         for cilio in range(eff_cilios_per_ring)
     ]
@@ -766,7 +760,7 @@ def collect_visible_cilios():
 # ---------------------------------------------------------------------------
 #  draw_cilio — Renderiza um cílio como curva de Bézier 3D e testa colisão
 # ---------------------------------------------------------------------------
-def draw_cilio(key, base_z, angle, length, phase, t, dt):
+def draw_cilio( base_z, angle, length, phase, t):
     """Desenha um cílio e retorna True se colidiu com o vírus.
 
     Usa uma curva de Bézier cúbica com 4 pontos de controle:
@@ -776,13 +770,11 @@ def draw_cilio(key, base_z, angle, length, phase, t, dt):
       P1 balança sem atraso, P2 com atraso de 1 rad, P3 com 2 rad.
 
     Parâmetros:
-        key    -- Tupla (indice_anel, indice_cilio) para identificação
         base_z -- Posição Z da base do cílio no túnel
         angle  -- Ângulo em radianos da posição na parede (0 a 2π)
         length -- Comprimento do cílio (varia aleatoriamente)
         phase  -- Fase inicial da animação (evita sincronismo)
         t      -- Tempo atual em segundos
-        dt     -- Delta time do frame
 
     Retorna:
         True se a ponta do cílio colidiu com o vírus.
@@ -795,12 +787,10 @@ def draw_cilio(key, base_z, angle, length, phase, t, dt):
     # Vetor apontando para o centro (crescimento normal do cílio)
     inx = -math.cos(angle)
     iny = -math.sin(angle)
-    # Vetor perpendicular (para fazer o cílio balançar de um lado para o outro)
     perp_x = -iny
     perp_y = inx
 
-    # 3. A Mágica do Chicote: Atraso de Fase (Phase Delay)
-    freq = 1.2 # Velocidade do chicote
+    freq = 1.2 
     
     # Base (P0) - Fixa na parede
     p0x, p0y, p0z = bx, by, base_z
@@ -855,10 +845,6 @@ def draw_cilio(key, base_z, angle, length, phase, t, dt):
 # ---------------------------------------------------------------------------
 #  Estado Global do Jogo
 # ---------------------------------------------------------------------------
-prog = None     # Shader GLSL compilado (createShader) — usado na Fase 2
-hud  = None     # Buffer 2D auxiliar (createGraphics) — para textos sobre WEBGL
-W = H = 0       # Largura e altura do canvas
-
 state = "menu"   # Estados: menu | tutorial | config | fase1 | fase2 | win | pausa | over
 
 # Fase 1
@@ -886,16 +872,6 @@ lod_strength = 1.0     # [ / ] = intensidade 0..1 (só quando ligado)
 prev_l       = False
 prev_lbr     = False   # [
 prev_rbr     = False   # ]
-
-# ---------------------------------------------------------------------------
-#  Variáveis Efetivas de Dificuldade
-#  Atualizadas por apply_difficulty() a cada reset de fase.
-#  Não modificar diretamente — use DIFFICULTY_PRESETS.
-# ---------------------------------------------------------------------------
-eff_cilios_per_ring   = CILIOS_PER_RING
-eff_cilio_spacing     = CILIO_SPACING
-eff_pontos_para_fase2 = PONTOS_PARA_FASE2
-eff_speed_ini_f2      = 18.0
 
 # ---------------------------------------------------------------------------
 #  Configurações Mutáveis (persistem durante a sessão)
@@ -937,12 +913,12 @@ def make_cell(indice_celula):
     """Gera posição de uma célula infectável dentro do túnel.
 
     Cada célula fica em uma posição polar aleatória (20% a 70% do raio
-    do túnel), espaçada CELL_SPACING unidades no eixo Z.
+    do túnel), espaçada eff_cilio_spacing unidades no eixo Z.
 
     Retorna: (posicao_z, centro_x, centro_y)
     """
     rng = random.Random((indice_celula * 1234567 + SEED) & 0xFFFFFFFF)
-    posicao_z = CELL_SPACING + indice_celula * CELL_SPACING
+    posicao_z = eff_cilio_spacing + indice_celula * eff_cilio_spacing
     raio_polar  = rng.uniform(TUNNEL_RADIUS * 0.20, TUNNEL_RADIUS * 0.70)
     angulo = rng.uniform(0, math.tau)
     return posicao_z, raio_polar * math.cos(angulo), raio_polar * math.sin(angulo)
@@ -951,8 +927,8 @@ def collect_visible_cells():
     """Retorna células visíveis e ainda não coletadas na janela de visibilidade."""
     z_inicio = cam_z_f1 - 50.0
     z_fim = cam_z_f1 + VIEW_DIST
-    idx_inicio = max(0, int((z_inicio - CELL_SPACING) // CELL_SPACING))
-    idx_fim = int((z_fim - CELL_SPACING) // CELL_SPACING) + 2
+    idx_inicio = max(0, int((z_inicio - eff_cilio_spacing) // eff_cilio_spacing))
+    idx_fim = int((z_fim - eff_cilio_spacing) // eff_cilio_spacing) + 2
     resultado = []
     for i in range(idx_inicio, idx_fim + 1):
         if i in collected_cells:
@@ -1104,7 +1080,7 @@ def reset_fase_2():
     global cam_z_f2, px_f2, py_f2, speed, score, hit_flash, state
     global heart_hz_f2, pulse_phase_f2
 
-    apply_difficulty()        # Aplica preset de dificuldade
+    apply_difficulty()       
 
     P5.camera()
     P5.perspective()
@@ -1279,49 +1255,6 @@ def handle_lod():
         lod_strength = min(1.0, lod_strength + 0.1)
     prev_rbr = rb_down
 
-# ---------------------------------------------------------------------------
-#  Menu / telas estáticas — desenhadas direto no canvas WEBGL com texto 2D
-#  Usamos ortho + translate para poder usar text() no modo WEBGL
-# ---------------------------------------------------------------------------
-
-def draw_menu(title, line2, line3):
-    P5.background(220, 180, 140)
-    P5.resetShader()
-    
-    # Reseta a câmera 3D para o padrão 
-    P5.camera()
-    P5.perspective()
-    
-    # Limpa o buffer 2D para desenhar o menu
-    hud.clear()
-    
-    # Caixa de fundo semitransparente
-    hud.noStroke()
-    hud.fill(120, 80, 80, 180)
-    hud.rectMode(P5.CENTER)
-    hud.rect(W / 2, H / 2, W, 140)
-    hud.rectMode(P5.CORNER)
-
-    # Título
-    hud.textAlign(P5.CENTER, P5.CENTER)
-    hud.fill(255, 200, 100)
-    hud.textSize(34)
-    hud.text(title, W / 2, H / 2 - 28)
-
-    # Linha 2
-    hud.fill(255, 240, 180)
-    hud.textSize(18)
-    hud.text(line2, W / 2, H / 2 + 4)
-
-    # Linha 3
-    hud.fill(200, 100, 120)
-    hud.text(line3, W / 2, H / 2 + 34)
-
-    hud.textAlign(P5.LEFT, P5.BASELINE)
-    
-    # Carimba o buffer na tela WEBGL
-    P5.image(hud, -W / 2, -H / 2, W, H)
-
 # ==============================================================================
 #  SISTEMA DE UI — Helpers, Dificuldade, Timer, Navegação e Telas
 #  Estrutura modular: adicione novas telas seguindo o padrão existente.
@@ -1346,21 +1279,6 @@ def _hud_stamp():
     """Carimba o buffer HUD na tela e restaura a projeção 3D."""
     P5.image(hud, -W / 2, -H / 2, W, H)
     P5.perspective(P5.PI / 3.6, float(W) / float(H), 1.0, 5000.0)
-
-def _clear_depth_buffer():
-    """Limpa SOMENTE o depth buffer do canvas WEBGL (mantém a cor já renderizada)."""
-    for getter in (
-        lambda: getattr(P5, 'drawingContext', None),
-        lambda: getattr(P5._renderer, 'GL', None),
-        lambda: getattr(P5._renderer, 'drawingContext', None),
-    ):
-        try:
-            gl = getter()
-            if gl is not None:
-                gl.clear(256)  # 256 = gl.DEPTH_BUFFER_BIT no WebGL
-                return
-        except Exception:
-            pass
 
 def _hud_panel(cx, cy, w, h, r=10):
     """Desenha um painel com fundo escuro e borda sutil no buffer HUD.
@@ -1387,12 +1305,14 @@ def apply_difficulty():
     Chamada a cada reset de fase — não modifica as constantes originais.
     Para adicionar novo nível: inserir entrada em DIFFICULTY_PRESETS.
     """
-    global eff_cilios_per_ring, eff_cilio_spacing, eff_pontos_para_fase2, eff_speed_ini_f2
+    global eff_cilios_per_ring, eff_cilio_spacing, eff_cilio_max_length, eff_pontos_para_fase2, eff_speed_ini_f2
     p = DIFFICULTY_PRESETS[difficulty]
-    eff_cilios_per_ring   = p["cilios_ring"]
-    eff_cilio_spacing     = p["cilio_spc"]
-    eff_pontos_para_fase2 = p["pontos"]
-    eff_speed_ini_f2      = p["speed_ini"]
+    eff_cilios_per_ring   = p["fase1"]["cilios_ring"]
+    eff_cilio_spacing     = p["fase1"]["cilio_spc"]
+    eff_cilio_max_length = p["fase1"]["cilio_max_len"]
+    eff_pontos_para_fase2 = p["fase1"]["pontos"]
+    eff_speed_ini_f2      = p["fase2"]["speed_ini"]
+
 
 def update_timer(phase_key, dt):
     """Acumula delta time no timer da fase ativa.
@@ -1939,8 +1859,8 @@ def draw_fase_1():
     P5.perspective(P5.PI / 3.6, float(W) / float(H), 1.0, 5000.0)
 
     # Luzes acompanham a câmera
-    # 1. Luz ambiente cor de vinho (elimina sombras pretas secas)
-    P5.ambientLight(60, 20, 30) 
+    # 1. Luz ambiente cor de vinho 
+    P5.ambientLight(115, 53, 68) 
     
     # 2. Luz principal (da frente): Branca levemente amarelada (brilho molhado)
     P5.pointLight(255, 230, 200, px_f1, py_f1, cam_z_f1 + 100) 
@@ -1952,8 +1872,8 @@ def draw_fase_1():
 
     hit_cilio = False
     for item in collect_visible_cilios():
-        key, base_z, angle, length, phase = item
-        if draw_cilio(key, base_z, angle, length, phase, t, dt):
+        base_z, angle, length, phase = item
+        if draw_cilio( base_z, angle, length, phase, t):
             hit_cilio = True
 
     for cell in collect_visible_cells():
@@ -2114,16 +2034,6 @@ def draw_tunnel(t):
             P5.fill(r2, g2, b2, 120)
             P5.vertex(x, y, z2_local)
         P5.endShape()
-
-    P5.stroke(40, 180, 120, 100)
-    P5.strokeWeight(0.8)
-    P5.noFill()
-    for li in range(8):
-        a  = (li / 8.0) * math.tau
-        xv = math.cos(a) * TUNNEL_RADIUS
-        yv = math.sin(a) * TUNNEL_RADIUS
-        P5.line(xv, yv, cam_z_f1 - 200.0, xv, yv, cam_z_f1 + VIEW_DIST)
-
 
 def draw_cell(idx, z, cx, cy, t):
     # z absoluto — câmera já posicionada em cam_z_f1
