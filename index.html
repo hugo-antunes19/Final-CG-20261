@@ -67,6 +67,55 @@
             letter-spacing: 1px;
         }
 
+        /* --- ABAS DE NAVEGAÇÃO --- */
+        .tab-menu {
+            margin-top: 30px;
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+        }
+
+        .tab-btn {
+            background: rgba(255, 60, 60, 0.1);
+            border: 1px solid rgba(255, 60, 60, 0.3);
+            color: var(--text-main);
+            padding: 12px 30px;
+            font-size: 1.1rem;
+            font-family: 'Outfit', sans-serif;
+            font-weight: 700;
+            border-radius: 30px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .tab-btn:hover {
+            background: rgba(255, 60, 60, 0.2);
+            transform: translateY(-2px);
+        }
+
+        .tab-btn.active {
+            background: var(--accent-red);
+            color: #fff;
+            box-shadow: 0 0 20px rgba(255, 60, 60, 0.4);
+        }
+
+        .tab-content {
+            display: none;
+            width: 100%;
+        }
+
+        .tab-content.active {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            animation: fadeIn 0.4s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
         #game-wrapper {
             margin: 30px auto;
             padding: 10px;
@@ -148,6 +197,39 @@
             margin: 0 4px;
         }
 
+        .full-width {
+            grid-column: 1 / -1;
+        }
+
+        .cg-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .cg-item {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            padding: 20px;
+            border-radius: 12px;
+        }
+
+        .cg-item h3 {
+            color: #ff8a8a;
+            margin-top: 0;
+            margin-bottom: 10px;
+            font-size: 1.2rem;
+            border-bottom: 1px dashed rgba(255, 138, 138, 0.3);
+            padding-bottom: 8px;
+        }
+        
+        .cg-item p {
+            font-size: 0.95rem;
+            margin-bottom: 0;
+            color: #c4c4c4;
+        }
+
         @media (max-width: 950px) {
             .content-section {
                 grid-template-columns: 1fr;
@@ -162,39 +244,92 @@
 <body>
 
     <header>
-        <h1>Retrovírus</h1>
-        <div class="subtitle">Trabalho de Computação Gráfica — 2026.1</div>
+        <div id="header-titles">
+            <h1>Retrovírus</h1>
+            <div class="subtitle">Trabalho de Computação Gráfica (EEL882) — 2026.1</div>
+            <div style="color: var(--text-muted); font-size: 0.95rem; margin-top: 8px; opacity: 0.85;">Hugo Antunes e Vivian Souza</div>
+        </div>
+        <nav class="tab-menu">
+            <button class="tab-btn active" onclick="openTab(event, 'tab-home')">🏠 Home</button>
+            <button class="tab-btn" onclick="openTab(event, 'tab-play')">🎮 Jogar</button>
+            <a href="https://github.com/hugo-antunes19/Final-CG-20261" target="_blank" class="tab-btn" style="text-decoration: none; display: inline-flex; align-items: center; gap: 8px; border-color: rgba(255,255,255,0.2); color: #e8e8e8;">
+                <svg height="18" width="18" fill="currentColor" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
+                GitHub
+            </a>
+        </nav>
     </header>
 
-    <div id="game-wrapper">
-        <div id="game-container"></div>
+    <div id="tab-home" class="tab-content active">
+        <main class="content-section">
+            <div class="card">
+                <h2>🦠 Sobre o Jogo</h2>
+                <p>Em <strong>Retrovírus</strong>, você controla um patógeno microscópico letal com a missão de colonizar o hospedeiro.</p>
+                <p>A infecção ocorre em estágios:</p>
+                <ul>
+                    <li><strong>Fase 1 (Túnel Epitelial):</strong> Invada a cavidade nasal, desvie dos cílios de defesa do organismo e infecte células saudáveis.</li>
+                    <li><strong>Fase 2 (Corrente Sanguínea):</strong> Sobreviva a uma corrida frenética dentro dos vasos sanguíneos, desviando de hemácias e glóbulos brancos.</li>
+                </ul>
+            </div>
+
+            <div class="card">
+                <h2>🎮 Controles</h2>
+                <p>Use o teclado para dominar o hospedeiro:</p>
+                <ul>
+                    <li><span class="key">W</span> <span class="key">A</span> <span class="key">S</span> <span class="key">D</span> ou <span class="key">Setas</span> : Movimentação</li>
+                    <li><span class="key">ESPAÇO</span> : Subir (Fase 1) / Confirmar menus</li>
+                    <li><span class="key">ENTER</span> : Confirmar / Avançar</li>
+                    <li><span class="key">ESC</span> : Pausar o jogo</li>
+                </ul>
+                <p style="margin-top: 20px; font-size: 0.9rem; color: var(--accent-red);">
+                    <em>Dica: Fique atento ao balanço dos cílios e antecipe seus movimentos!</em>
+                </p>
+            </div>
+
+            <div class="card full-width">
+                <h2>💻 Conceitos de Computação Gráfica (Por trás dos panos)</h2>
+                <div class="cg-grid">
+                    <div class="cg-item">
+                        <h3>Raymarching</h3>
+                        <p>Em vez de construir a Corrente Sanguínea usando os tradicionais polígonos, nós desenhamos a cena "lançando raios" a partir da câmera para dentro da tela. A placa de vídeo avança o raio passo a passo até ele encostar em algo, o que nos permite criar formas super orgânicas sem travar o jogo.</p>
+                    </div>
+                    <div class="cg-item">
+                        <h3>Signed Distance Fields (SDF)</h3>
+                        <p>Para o Raymarching saber onde as coisas estão, não usamos modelos 3D baixados, mas sim <strong>fórmulas matemáticas</strong>! Cada hemácia ou glóbulo branco é uma equação que diz qual a distância até ele. Nossas formas foram baseadas no incrível <a href="https://iquilezles.org/articles/distfunctions/" target="_blank" style="color: #ff8a8a; text-decoration: underline;">catálogo de funções do Íñigo Quílez</a>.</p>
+                    </div>
+                    <div class="cg-item">
+                        <h3>Curvas de Bézier 3D</h3>
+                        <p>Sabe aqueles cílios perigosos balançando na Fase 1? Eles são criados matematicamente através de <strong>Curvas de Bézier</strong>. Para deixar o movimento natural, nós programamos uma "física de chicote": a base da curva se move primeiro, e a ponta só balança alguns milissegundos depois.</p>
+                    </div>
+                    <div class="cg-item">
+                        <h3>Iluminação Customizada (Shaders)</h3>
+                        <p>A iluminação da Fase 2 é calculada pixel a pixel direto na placa de vídeo (Fragment Shader). O código consegue sentir a curvatura das células e aplica reflexos de luz de forma realista, incluindo um contorno brilhante nas bordas (o famoso efeito <em>Fresnel</em>).</p>
+                    </div>
+                </div>
+            </div>
+        </main>
     </div>
 
-    <main class="content-section">
-        <div class="card">
-            <h2>🦠 Sobre o Jogo</h2>
-            <p>Em <strong>Retrovírus</strong>, você controla um patógeno microscópico letal com a missão de colonizar o hospedeiro.</p>
-            <p>A infecção ocorre em estágios:</p>
-            <ul>
-                <li><strong>Fase 1 (Túnel Epitelial):</strong> Invada a cavidade nasal, desvie dos cílios de defesa do organismo e infecte células saudáveis.</li>
-                <li><strong>Fase 2 (Corrente Sanguínea):</strong> Sobreviva a uma corrida frenética dentro dos vasos sanguíneos, desviando de hemácias e glóbulos brancos.</li>
-            </ul>
+    <div id="tab-play" class="tab-content">
+        <div id="game-wrapper">
+            <div id="game-container"></div>
         </div>
+    </div>
 
-        <div class="card">
-            <h2>🎮 Controles</h2>
-            <p>Use o teclado para dominar o hospedeiro:</p>
-            <ul>
-                <li><span class="key">W</span> <span class="key">A</span> <span class="key">S</span> <span class="key">D</span> ou <span class="key">Setas</span> : Movimentação</li>
-                <li><span class="key">ESPAÇO</span> : Subir (Fase 1) / Confirmar menus</li>
-                <li><span class="key">ENTER</span> : Confirmar / Avançar</li>
-                <li><span class="key">ESC</span> : Pausar o jogo</li>
-            </ul>
-            <p style="margin-top: 20px; font-size: 0.9rem; color: var(--accent-red);">
-                <em>Dica: Fique atento ao balanço dos cílios e antecipe seus movimentos!</em>
-            </p>
-        </div>
-    </main>
+    <script>
+        function openTab(evt, tabId) {
+            document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            
+            document.getElementById(tabId).classList.add('active');
+            evt.currentTarget.classList.add('active');
+
+            if (tabId === 'tab-play') {
+                document.getElementById('header-titles').style.display = 'none';
+            } else {
+                document.getElementById('header-titles').style.display = 'block';
+            }
+        }
+    </script>
     <script>
         // Capture the original console.error before any overrides, so we can
         // call it directly without triggering the intercept (prevents infinite loops).

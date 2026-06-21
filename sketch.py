@@ -1527,7 +1527,6 @@ def draw_fase_1():
     # =======================================================================
 
     draw_virus_f1(prog_t, t, px_f1, py_f1, cam_z_f1)
-    draw_hud_f1_inline()
 
     if hit_cilio:
         timer_total = timers["fase1"]   
@@ -1694,52 +1693,6 @@ def draw_cell(idx, z, cx, cy, t):
     P5.sphere(r * 1.35)
     P5.pop()
 
-def draw_hud_f1_inline():
-    hud.clear()
-
-    hud.noStroke()
-    hud.fill(150, 100, 100, 180)
-    hud.rectMode(P5.CORNER)
-    hud.rect(10, 10, 220, 65, 8)
-
-    bw = 190.0 * (pontos / eff_pontos_para_fase2)
-    hud.fill(255, 220, 100)
-    hud.rect(18, 38, bw, 14, 4)
-
-    hud.textSize(14)
-    hud.fill(255, 240, 150)
-    hud.textAlign(P5.LEFT, P5.TOP)
-    hud.text("CELULAS INFECTADAS", 20, 12)
-    hud.fill(255, 240, 180)
-    hud.text("%d / %d" % (pontos, eff_pontos_para_fase2), 20, 54)
-
-    hud.textAlign(P5.RIGHT, P5.TOP)
-    
-    hud.fill(150, 100, 100, 180)
-    hud.rect(W - 170, 10, 160, 65, 8)
-
-    hud.fill(200, 240, 200)
-    hud.textSize(14)
-    tempo_str = _fmt_time(timers["fase1"] + timers["fase2"])
-    pontos_totais = pontos * 100 + int(score)
-    hud.text("TEMPO TOTAL: %s" % tempo_str, W - 20, 20)
-    hud.text("PONTUACAO: %d" % pontos_totais, W - 20, 44)
-
-    hud.fill(200, 100, 120, 200)
-    hud.textSize(13)
-    hud.textAlign(P5.CENTER, P5.BOTTOM)
-    hud.text("WASD / setas: mover  |  desvie dos cilios!", W / 2, H - 6)
-
-    hud.textAlign(P5.LEFT, P5.BASELINE)
-
-    P5.resetShader()
-    P5.camera()
-    P5.perspective()
-    P5.fill(255, 255, 255, 255)
-    P5.image(hud, -W / 2, -H / 2, W, H)
-
-    P5.perspective(P5.PI / 3.6, float(W) / float(H), 1.0, 5000.0)
-
 def draw_fase_2():
     global cam_z_f2, px_f2, py_f2, speed, score, best_f2, hit_flash, state
     global heart_hz_f2, pulse_phase_f2, timer_total
@@ -1841,82 +1794,7 @@ def draw_fase_2():
     set_virus_uniforms(prog, 1.0)
     P5.noStroke()              
     P5.rect(0, 0, W, H)
-
-    draw_hud_f2()
-
-def draw_hud_f2():
-    global pontos, score, timers, best_f2, speed, heart_hz_f2, lod_enabled, lod_strength
-
-    hud.clear()
-    hud.textAlign(P5.LEFT, P5.TOP)
-    hud.noStroke()
-
-    try:
-        hud.fill(20, 8, 10, 170)
-        hud.rect(10, 12, 200, 72, 8)       
-        hud.rect(W - 152, 12, 142, 98, 8)  
-
-        hud.fill(255, 210, 120)
-        hud.textSize(16)
-        pontos_totais = int(pontos * 100 + score)
-        hud.text("PONTUACAO: %d" % pontos_totais, 18, 18)
-        hud.text("DISTANCIA: %d m" % int(score), 18, 40)
-        hud.text("RECORDE:   %d m" % int(best_f2), 18, 62)
-        
-        hud.text("VEL: %d" % int(speed), W - 144, 18)
-        hud.text("BPM: %d" % int(heart_hz_f2 * 60.0), W - 144, 40)
-        hud.text("TEMPO F2: %s" % _fmt_time(timers["fase2"]), W - 144, 62)
-        
-        hud.fill(200, 240, 200)
-        tempo_str = _fmt_time(timers["fase1"] + timers["fase2"])
-        hud.text("T. TOTAL: %s" % tempo_str, W - 144, 84)
-
-        if lod_enabled:
-            hud.fill(180, 220, 180)
-            hud.textSize(14)
-            hud.text("LOD: ON  %d%%" % int(lod_strength * 100), 16, H - 42)
-            hud.fill(200, 180, 140)
-            hud.textSize(12)
-            hud.text("L = desligar  |  [ ] = intensidade", 16, H - 24)
-        else:
-            hud.fill(220, 180, 180)
-            hud.textSize(14)
-            hud.text("LOD: OFF (max)", 16, H - 32)
-            hud.fill(200, 180, 140)
-            hud.textSize(12)
-            hud.text("L = ligar LOD", 16, H - 14)
-            
-    except Exception as e:
-        hud.fill(255, 0, 0, 255)
-        hud.textSize(20)
-        hud.text("ERRO HUD: " + str(e), 20, 20)
-
-    hud.textAlign(P5.LEFT, P5.BASELINE)
-
-    P5.resetShader()
-    P5.camera()
-    P5.perspective()
-
-    try:
-        gl = P5.drawingContext
-        gl.clear(256)      
-        gl.disable(2929)   
-    except:
-        pass
-
-    P5.noStroke()
-    P5.fill(255, 255, 255, 255)
-    P5.texture(hud)
-    P5.rect(-W / 2, -H / 2, W, H)
-
-    try:
-        gl = P5.drawingContext
-        gl.enable(2929)
-    except:
-        pass
-
-    P5.perspective(P5.PI / 3.6, float(W) / float(H), 1.0, 5000.0)
-
+    
 def _lerp(a, b, x):
     return a + (b - a) * x
  
