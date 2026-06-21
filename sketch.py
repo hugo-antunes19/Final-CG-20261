@@ -1232,42 +1232,55 @@ def draw_win_screen():
     _hud_stamp()
 
 def draw_win_f2_screen():
+    global pontos, score, timers
+    
     _hud_setup()
     hud.clear()
 
+    # Fundo escuro levemente avermelhado/vitória
     hud.noStroke()
     hud.fill(12, 5, 20, 235)
     hud.rect(0, 0, W, H)
 
     cx, cy = W / 2, H / 2
-    _hud_panel(cx, cy, 460, 230)
+    # Painel um pouco mais alto para acomodar o placar final
+    _hud_panel(cx, cy, 460, 250)
 
     hud.textAlign(P5.CENTER, P5.CENTER)
 
-    hud.fill(100, 200, 255)
-    hud.textSize(28)
-    hud.text("FASE 2 COMPLETA!", cx, cy - 86)
+    # Título de Vitória (Verde vibrante)
+    hud.fill(100, 255, 150)
+    hud.textSize(32)
+    hud.text("VITORIA!", cx, cy - 90)
 
-    hud.stroke(80, 160, 200, 80)
+    hud.stroke(80, 200, 120, 80)
     hud.strokeWeight(1)
     hud.line(cx - 170, cy - 62, cx + 170, cy - 62)
     hud.noStroke()
 
+    # Subtítulo temático
     hud.fill(220, 200, 180)
     hud.textSize(16)
-    hud.text("Corrente sanguinea superada.", cx, cy - 34)
-    hud.text("Tempo da Fase 2:    %s"  % _fmt_time(timers["fase2"]), cx, cy - 8)
+    hud.text("O sistema do hospedeiro foi dominado.", cx, cy - 34)
+
+    # Cálculo dos totais
+    pontos_totais = int(pontos * 100 + score)
+    tempo_total = _fmt_time(timers["fase1"] + timers["fase2"])
+
+    # Placar Final em destaque (Amarelo/Dourado)
+    hud.fill(255, 210, 120)
+    hud.textSize(18)
+    hud.text("Pontuacao Total: %d" % pontos_totais, cx, cy + 2)
+    hud.text("Tempo Total: %s"  % tempo_total, cx, cy + 28)
 
     hud.stroke(160, 120, 80, 60)
-    hud.line(cx - 160, cy + 14, cx + 160, cy + 14)
+    hud.line(cx - 160, cy + 58, cx + 160, cy + 58)
     hud.noStroke()
 
+    # Instrução para voltar ao menu principal
     hud.fill(255, 200, 80)
     hud.textSize(15)
-    hud.text("ESPACO / ENTER — voltar ao menu", cx, cy + 48)
-    hud.fill(140, 95, 95)
-    hud.textSize(13)
-    hud.text("(Fase 3: Cerebro em desenvolvimento...)", cx, cy + 76)
+    hud.text("ESPACO / ENTER — voltar ao menu", cx, cy + 86)
 
     hud.textAlign(P5.LEFT, P5.BASELINE)
     _hud_stamp()
@@ -1461,10 +1474,6 @@ def draw_fase_1():
 
     draw_virus_f1(prog_t, t, px_f1, py_f1, cam_z_f1)
     draw_hud_f1_inline()
-
-    if P5.keyIsDown(13):
-        reset_fase_2()
-        return
 
     if hit_cilio:
         timer_total = timers["fase1"]   
@@ -1810,3 +1819,33 @@ def set_virus_uniforms(shader, prog_t):
     shader.setUniform("uVirusSpikeW",   float(vp["spike_w"]   / sc))
     shader.setUniform("uVirusBodyCol",  _to_js([br/255.0, bg/255.0, bb/255.0]))
     shader.setUniform("uVirusSpikeCol", _to_js([sr/255.0, sg/255.0, sb/255.0]))
+    
+    # Buffer para armazenar as últimas teclas digitadas
+cheat_buffer = ""
+
+def keyTyped():
+    """Função nativa do p5.js que detecta teclas imprimíveis digitadas"""
+    global cheat_buffer, state, timer_total
+    
+    # Só queremos ouvir o cheat code se o jogador estiver em uma fase ativa
+    if state in ("fase1", "fase2"):
+        # Adiciona a tecla digitada (em minúsculo) ao buffer
+        cheat_buffer += str(P5.key).lower()
+        
+        # Mantém apenas as últimas 10 letras no buffer
+        if len(cheat_buffer) > 10:
+            cheat_buffer = cheat_buffer[-10:]
+            
+        # Verifica se o código secreto "vasco" foi digitado
+        if "vasco" in cheat_buffer:
+            if state == "fase1":
+                # Se estiver na Fase 1, pula para a Fase 2
+                reset_fase_2()
+            
+            elif state == "fase2":
+                # Se estiver na Fase 2, força a vitória
+                timer_total = timers["fase1"] + timers["fase2"]
+                state = "win_f2"
+                
+            # Limpa o buffer após o código funcionar
+            cheat_buffer = ""
