@@ -649,37 +649,40 @@ def make_obstacle(indice_obstaculo):
     rng = random.Random((indice_obstaculo * 2654435761) & 0xFFFFFFFF)
 
     eh_globulo = rng.random() < 0.3
-    if eh_globulo:
-        raio = rng.uniform(2.5, 3.5)   
-    else:
-        raio = rng.uniform(1.6, 2.8)   
+    raio = rng.uniform(2.5, 3.5) if eh_globulo else rng.uniform(1.6, 2.8)
     
-    limite = TUNNEL_HALF - raio - 0.4
+    z_base = OB_START + indice_obstaculo * SPACING
+    tipo_visual = rng.uniform(3.15, 6.28) if eh_globulo else rng.uniform(0.0, 3.13)
+
+    p_comp = rng.random()
+    if p_comp < 0.4:
+        comportamento = 0
+    elif p_comp < 0.7:
+        comportamento = 1
+    else:
+        comportamento = 2
 
     angulo_base = rng.uniform(0, math.tau)
-    dist_centro = rng.uniform(limite * 0.3, limite * 0.92)  
-    centro_x_base = math.cos(angulo_base) * dist_centro
-    centro_y_base = math.sin(angulo_base) * dist_centro
-
-    drift_amp = rng.uniform(0.8, 2.2)       
-    drift_freq = rng.uniform(0.06, 0.14)    
-    drift_phase = rng.uniform(0, math.tau)  
+    fase = rng.uniform(0, math.tau)  
     
-    drift_ang = angulo_base + math.pi / 2   
+    # =======================================================
+    # FÍSICA CORRIGIDA: 
+    # O centro da célula não passa do limite geométrico.
+    # O -0.05 é uma tolerância microscópica para o SDF não fundir as texturas.
+    # =======================================================
+    limite_extremo = TUNNEL_HALF - raio - 0.05
 
-    z_base = OB_START + indice_obstaculo * SPACING
-    
-    drift = math.sin(z_base * drift_freq + drift_phase) * drift_amp
-    centro_x = centro_x_base + math.cos(drift_ang) * drift
-    centro_y = centro_y_base + math.sin(drift_ang) * drift
+    if comportamento == 0:
+        dist_centro = rng.uniform(0.0, limite_extremo * 0.5) 
+        freq = rng.uniform(0.04, 0.08)      
+    elif comportamento == 1:
+        dist_centro = rng.uniform(limite_extremo * 0.7, limite_extremo) 
+        freq = rng.uniform(0.015, 0.035)                
+    else:
+        dist_centro = limite_extremo                 
+        freq = rng.uniform(0.02, 0.05)       
 
-    dist = math.hypot(centro_x, centro_y)
-    if dist > limite:
-        centro_x = centro_x / dist * limite
-        centro_y = centro_y / dist * limite
-
-    tipo = rng.uniform(3.15, 6.28) if eh_globulo else rng.uniform(0.0, 3.13)
-    return z_base, centro_x, centro_y, raio, tipo
+    return z_base, raio, tipo_visual, comportamento, angulo_base, dist_centro, freq, fase
 
 def collect_obstacles():
     indice_base = int((cam_z_f2 - OB_START) // SPACING)
@@ -688,26 +691,43 @@ def collect_obstacles():
     n = max(0, indice_base - 1)
     
     while contagem < MAX_OBS and n < indice_base + MAX_OBS + 2:
-        z, cx, cy, raio, tipo = make_obstacle(n)
+        z_base, raio, tipo, comp, ang_base, dist, freq, fase = make_obstacle(n)
         
-        # Evita gerar dados para os obstáculos quando estão após a linha de chegada
-        if z > META_F2 - 20.0:
+        # Evita gerar obstáculos após a linha de chegada
+        if z_base > META_F2 - 20.0:
             n += 1
             continue
 
-        rng2 = random.Random((n * 1234567 + 99) & 0xFFFFFFFF)
-        anim_amp   = rng2.uniform(0.3, 0.9)     
-        anim_freq  = rng2.uniform(0.04, 0.10)   
-        anim_phase = rng2.uniform(0, math.tau)  
-        anim_ang   = rng2.uniform(0, math.tau)  
+        # A distância em Z do obstáculo até a câmera
+        dist_z = z_base - cam_z_f2
         
-        anim = math.sin(cam_z_f2 * anim_freq + anim_phase) * anim_amp
-        cx += math.cos(anim_ang) * anim
-        cy += math.sin(anim_ang) * anim
+        # =======================================================
+        # SISTEMA DE PADRÕES AUTÔNOMOS (O "Tempo" é o cam_z_f2)
+        # =======================================================
+        if comp == 0:
+            # NORMAL: Fica na sua faixa, apenas tremendo (drift suave)
+            anim = math.sin(cam_z_f2 * freq + fase) * 0.5
+            cx = math.cos(ang_base) * dist + anim
+            cy = math.sin(ang_base) * dist + anim
+            
+        elif comp == 1:
+            # ORBITAL: Fica girando colado nas paredes do vaso.
+            # Metade gira em sentido horário, metade anti-horário
+            dir_giro = 1.0 if n % 2 == 0 else -1.0
+            angulo_atual = ang_base + (cam_z_f2 * freq * dir_giro)
+            cx = math.cos(angulo_atual) * dist
+            cy = math.sin(angulo_atual) * dist
+            
+        else:
+            # VARREDOR: Faz um pêndulo rasgando o vaso de uma extremidade à outra
+            oscilacao = math.sin(cam_z_f2 * freq + fase) # Oscila perfeitamente de -1 a 1
+            cx = math.cos(ang_base) * (dist * oscilacao)
+            cy = math.sin(ang_base) * (dist * oscilacao)
+        # =======================================================
 
-        dist_z = z - cam_z_f2
         n += 1
 
+        # Culling: descarta quem já ficou para trás ou está longe na névoa
         if dist_z < -1.0 or dist_z > 150.0:
             continue
 
@@ -716,6 +736,7 @@ def collect_obstacles():
         tipos.append(tipo)
         contagem += 1
     
+    # Preenche slots não utilizados do Shader com dados inertes
     while len(raios) < MAX_OBS:
         posicoes_relativas.extend([0.0, 0.0, 9999.0])
         raios.append(0.0)
@@ -1640,14 +1661,37 @@ def draw_fase_2():
     base = int((virus_z - OB_START) // SPACING)
     for n in range(base - 2, base + MAX_OBS + 2):
         if n < 0: continue
-        z, cx, cy, rad, _ = make_obstacle(n)
+        
+        z, rad, tipo, comp, ang_base, dist, freq, fase = make_obstacle(n)
         
         if z > META_F2 - 20.0:
             continue
 
         dz = z - virus_z
+        
         if abs(dz) < rad * 0.45:
-            if math.hypot(cx - px_f2, cy - py_f2) < rad * 0.6 + SHIP_RADIUS_F2:
+            if comp == 0:
+                anim = math.sin(cam_z_f2 * freq + fase) * 0.5
+                cx = math.cos(ang_base) * dist + anim
+                cy = math.sin(ang_base) * dist + anim
+            elif comp == 1:
+                dir_giro = 1.0 if n % 2 == 0 else -1.0
+                angulo_atual = ang_base + (cam_z_f2 * freq * dir_giro)
+                cx = math.cos(angulo_atual) * dist
+                cy = math.sin(angulo_atual) * dist
+            else:
+                oscilacao = math.sin(cam_z_f2 * freq + fase)
+                cx = math.cos(ang_base) * (dist * oscilacao)
+                cy = math.sin(ang_base) * (dist * oscilacao)
+
+            # =======================================================
+            # HITBOXES HONESTAS:
+            # tipo >= 3.14 (Glóbulo Branco): Esfera cheia, hitbox de 85% do raio visual
+            # tipo < 3.14 (Hemácia): Disco achatado, hitbox de 70% do raio visual
+            # =======================================================
+            hitbox_rad = rad * 0.85 if tipo >= 3.14 else rad * 0.70
+
+            if math.hypot(cx - px_f2, cy - py_f2) < hitbox_rad + SHIP_RADIUS_F2:
                 timer_total = timers["fase1"] + timers["fase2"]  
                 state       = "over"
                 hit_flash   = 1.0
