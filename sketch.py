@@ -12,12 +12,9 @@
 
 # ===========================================================================
 # TODOs Gerais
-# TODO: Corrigir colisão entre vírus e cílios, a hitbox parece estar inadequada
-# TODO: Adicionar 'meleca' na Fase 1 para ser mais realista
-# TODO: Adicionar animações sanguíneas para simular a corrente sanguínea na Fase 2
+# TODO: Adicionar animações de meleca na Fase 1 para ser mais realista
 # TODO: Adicionar 'modo' desenvolvedor para controlarmos o vírus por completo para testar as fases (encostar nos obstáculos ou passar perto)
 # TODO: Adicionar som que altera de fase em fase
-# TODO: Implementar Fase 3
 # TODO: Adicionar transição de tela entre fases mais complexa
 # TODO: Otimização do código e eventuais problemas de renderização (bugs/travamentos)
 # TODO: Melhorar documentação no repositório
@@ -46,10 +43,16 @@ FWD_SPEED_F1     = 5.5      # Velocidade de avanço/recuo no eixo Z (pixels/fram
 CELL_RADIUS      = 22.0     # Raio visual da esfera de cada célula
 CELL_COL_DIST    = SHIP_RADIUS_F1 + CELL_RADIUS  # Distância de colisão vírus↔célula
 
-VIEW_DIST        = 1200.0   # Distância máxima de renderização à frente da câmera
+VIEW_DIST        = 1000.0   # Distância máxima de renderização à frente da câmera
 SEED             = 42       # Semente global para geração procedural determinística
 
 CILIO_RADIUS_COL = 14.0     # Raio de colisão da ponta do cílio
+
+BOOGER_CLUSTER_SPACING = 190.0  # Distância média entre regiões com melecas
+BOOGER_RADIUS_MIN      = 14.0   # Tamanho mínimo visual da meleca
+BOOGER_RADIUS_MAX      = 32.0   # Tamanho máximo visual da meleca
+BOOGER_CLUSTER_MIN     = 0      # Algumas regiões ficam limpas para parecer natural
+BOOGER_CLUSTER_MAX     = 3      # Máximo de melecas por região procedural
 
 # ---------------------------------------------------------------------------
 #  Constantes Fase 2 — Corrente Sanguínea (Raymarching SDF)
@@ -98,7 +101,7 @@ DIFFICULTY_PRESETS = {
             }},
     2: {"nome": "Dificil", 
         "fase1": {
-            "cilios_ring": 6, "cilio_spc":  80.0, "cilio_max_len": 150.0, "cell_spacing": 250.0, "pontos": 7
+            "cilios_ring": 6, "cilio_spc":  100.0, "cilio_max_len": 140.0, "cell_spacing": 250.0, "pontos": 7
             },
         "fase2": {
             "speed_ini": 24.0
@@ -815,11 +818,11 @@ def draw_cilio( base_z, angle, length, phase, t):
     p3y = by + iny * length + perp_y * sway3
     p3z = base_z
 
-    # 4. Renderização da Curva
-    pulse = 0.6 + 0.4 * math.sin(t * 2.2 + phase)
-    v = int(30 + pulse * 60)
-    P5.stroke(v, v, v, 210)
-    P5.strokeWeight(3.5)
+    # 4. Renderização da Curva (substitua esta parte em draw_cilio)
+
+    # Fios grossos e escuros, cor de pêlo
+    P5.stroke(25, 15, 10, 240) 
+    P5.strokeWeight(4.5)  # Um pouco mais espesso para marcar presença na tela
     P5.noFill()
 
     P5.beginShape()
@@ -936,6 +939,38 @@ def collect_visible_cells():
         z, cx, cy = make_cell(i)
         if z_inicio <= z <= z_fim:
             resultado.append((i, z, cx, cy))
+    return resultado
+
+def make_boogers(indice_regiao):
+    """Gera melecas grudadas na parede interna do tunel nasal.
+
+    A geometria e deterministica para cada regiao, mantendo o mesmo desenho
+    quando a camera avanca ou recua.
+    """
+    rng = random.Random((indice_regiao * 1103515245 + SEED + 8080) & 0xFFFFFFFF)
+    z_base = BOOGER_CLUSTER_SPACING * 0.55 + indice_regiao * BOOGER_CLUSTER_SPACING
+    quantidade = rng.randint(BOOGER_CLUSTER_MIN, BOOGER_CLUSTER_MAX)
+    melecas = []
+
+    for _ in range(quantidade):
+        z = z_base + rng.uniform(-BOOGER_CLUSTER_SPACING * 0.45, BOOGER_CLUSTER_SPACING * 0.45)
+        angle = rng.uniform(0, math.tau)
+        radius = rng.uniform(BOOGER_RADIUS_MIN, BOOGER_RADIUS_MAX)
+        melecas.append((z, angle, radius))
+
+    return melecas
+
+def collect_visible_boogers():
+    """Retorna melecas visiveis na janela de renderizacao da Fase 1."""
+    z_inicio = cam_z_f1 - 50.0
+    z_fim = cam_z_f1 + VIEW_DIST
+    idx_inicio = max(0, int((z_inicio - BOOGER_CLUSTER_SPACING * 0.55) // BOOGER_CLUSTER_SPACING) - 1)
+    idx_fim = int((z_fim - BOOGER_CLUSTER_SPACING * 0.55) // BOOGER_CLUSTER_SPACING) + 2
+    resultado = []
+    for i in range(idx_inicio, idx_fim + 1):
+        for z, angle, radius in make_boogers(i):
+            if z_inicio <= z <= z_fim:
+                resultado.append((i, z, angle, radius))
     return resultado
 
 def make_obstacle(indice_obstaculo):
@@ -1827,14 +1862,14 @@ def draw_fase_1():
     mv = MOVE_SPEED_F1
 
     # Lateral
-    if P5.keyIsDown(P5.LEFT_ARROW)  or P5.keyIsDown(65): px_f1 += mv 
-    if P5.keyIsDown(P5.RIGHT_ARROW) or P5.keyIsDown(68): px_f1 -= mv
+    if P5.keyIsDown(65): px_f1 += mv 
+    if P5.keyIsDown(68): px_f1 -= mv
 
     # Vertical
     if P5.keyIsDown(P5.UP_ARROW):    py_f1 -= mv
     if P5.keyIsDown(P5.DOWN_ARROW):  py_f1 += mv
 
-    # Espaço = descer
+    # Espaço = subir
     if P5.keyIsDown(32): py_f1 -= mv
     # Ctrl = descer
     if P5.keyIsDown(17): py_f1 += mv
@@ -1850,7 +1885,7 @@ def draw_fase_1():
         px_f1 = px_f1 / dist * lim
         py_f1 = py_f1 / dist * lim
 
-    P5.background(220, 180, 140)
+    P5.background(125, 46, 46)
 
     # Posição da câmera
     P5.camera(px_f1, py_f1,        cam_z_f1 - 150.0,
@@ -1861,6 +1896,7 @@ def draw_fase_1():
     # Luzes acompanham a câmera
     # 1. Luz ambiente cor de vinho 
     P5.ambientLight(115, 53, 68) 
+    # P5.ambientLight(219, 160, 174) 
     
     # 2. Luz principal (da frente): Branca levemente amarelada (brilho molhado)
     P5.pointLight(255, 230, 200, px_f1, py_f1, cam_z_f1 + 100) 
@@ -1868,7 +1904,14 @@ def draw_fase_1():
     # 3. Luz de preenchimento (trás): Rosa choque/vermelho para dar subsurface scattering
     P5.pointLight(255, 50, 80, px_f1, py_f1, cam_z_f1 - 100)
 
+    # Progressão visual da infecção (0.0 → 1.0 conforme células coletadas)
+    prog_t = min(1.0, pontos / eff_pontos_para_fase2)  
+
     draw_tunnel(t)
+
+    for booger in collect_visible_boogers():
+        _, z, angle, radius = booger
+        draw_booger(z, angle, radius, prog_t)
 
     hit_cilio = False
     for item in collect_visible_cilios():
@@ -1894,9 +1937,6 @@ def draw_fase_1():
     # =======================================================================
     #  Renderização do Vírus (Jogador) — Evolução Visual
     # =======================================================================
-
-    #  Progressão visual (0.0 → 1.0 conforme células coletadas)
-    prog_t = min(1.0, pontos / eff_pontos_para_fase2)   # usa preset de dificuldade
 
     draw_virus_f1(prog_t, t, px_f1, py_f1, cam_z_f1)
 
@@ -2002,10 +2042,67 @@ def draw_virus_f1(prog_t, t, px, py, cam_z):
 
     P5.pop()   # fecha o translate principal do vírus
 
+def draw_booger(z, angle, radius, infection_t):
+    infection_t = max(0.0, min(1.0, infection_t))
+
+    # 1. Cor Base: de um marrom bem mais escuro e sujo (70, 50, 20) para o verde
+    br = int(_lerp(64,  104, infection_t))
+    bg = int(_lerp(38, 166, infection_t))
+    bb = int(_lerp(6,   23, infection_t))
+
+    # 2. Cor Emissiva (Brilho Próprio): começa em 0 (não emite luz) e escala 
+    # gradativamente multiplicando por infection_t. O marrom não brilha mais!
+    em_r = int((br // 5) * infection_t)
+    em_g = int((bg // 5) * infection_t)
+    em_b = int((bb // 5) * infection_t)
+
+    cx = math.cos(angle) * TUNNEL_RADIUS
+    cy = math.sin(angle) * TUNNEL_RADIUS
+
+    # Rotação para grudar na parede do cilindro
+    rot_z = angle + P5.PI / 2
+
+    P5.push()
+    P5.translate(cx, cy, z)
+    P5.rotateZ(rot_z)
+    P5.noStroke()
+    
+    P5.fill(br, bg, bb, 210) 
+    # Aplica o brilho progressivo
+    P5.emissiveMaterial(em_r, em_g, em_b)
+    P5.specularMaterial(150)
+    P5.shininess(200.0) 
+
+    # Criação do Cluster Amorfo e Estático
+    rng = random.Random(int(z * 1000)) 
+    num_blobs = rng.randint(3, 5)
+
+    for i in range(num_blobs):
+        P5.push()
+        
+        # Deslocamento irregular no plano da parede
+        dx = rng.uniform(-radius * 0.4, radius * 0.4)
+        dy = rng.uniform(-radius * 0.3, radius * 0.6) 
+        dz_local = rng.uniform(-radius * 0.1, radius * 0.1)
+        
+        P5.translate(dx, dy, dz_local)
+        P5.rotateZ(rng.uniform(0, math.tau))
+        
+        # Tamanhos aleatórios e estáticos para cada bolha
+        r_x = radius * rng.uniform(0.7, 1.2)
+        r_y = radius * rng.uniform(0.4, 0.8)
+        r_z = radius * rng.uniform(0.04, 0.08) # Achatado contra a parede
+        
+        P5.ellipsoid(r_x, r_y, r_z)
+        
+        P5.pop()
+
+    P5.pop()
+
 def draw_tunnel(t):
     SEGS  = 32
     RINGS = 24
-    STEP  = VIEW_DIST / RINGS
+    STEP  = (VIEW_DIST + 200) // RINGS
 
     for ri in range(RINGS):
         # z absoluto: estendido atrás da câmera para imersão total
@@ -2015,13 +2112,13 @@ def draw_tunnel(t):
         pulse1 = 0.5 + 0.5 * math.sin(z1_local * 0.012 - t * 2.5)
         pulse2 = 0.5 + 0.5 * math.sin(z2_local * 0.012 - t * 2.5)
 
-        r1 = int(220 + pulse1 * 35)
-        g1 = int(140 + pulse1 * 25)
-        b1 = int(140 + pulse1 * 20)
+        r1 = int(200 + pulse1 * 28)
+        g1 = int(200 + pulse1 * 12)
+        b1 = int(200 + pulse1 * 10)
         
-        r2 = int(220 + pulse2 * 35)
-        g2 = int(140 + pulse2 * 25)
-        b2 = int(140 + pulse2 * 20)
+        r2 = int(200 + pulse2 * 28)
+        g2 = int(200 + pulse2 * 12)
+        b2 = int(200 + pulse2 * 20)
 
         P5.noStroke()
         P5.beginShape(P5.TRIANGLE_STRIP)
@@ -2029,10 +2126,11 @@ def draw_tunnel(t):
             a = (si / SEGS) * math.tau
             x = math.cos(a) * TUNNEL_RADIUS
             y = math.sin(a) * TUNNEL_RADIUS
-            P5.fill(r1, g1, b1, 120)
+            P5.fill(r1, g1, b1, 255)
             P5.vertex(x, y, z1_local)
-            P5.fill(r2, g2, b2, 120)
+            P5.emissiveMaterial(r2, g2, b2, 150)
             P5.vertex(x, y, z2_local)
+            P5.emissiveMaterial(0, 0, 0, 255)
         P5.endShape()
 
 def draw_cell(idx, z, cx, cy, t):
@@ -2042,9 +2140,9 @@ def draw_cell(idx, z, cx, cy, t):
     P5.push()
     P5.translate(cx, cy, z)   # ← era z - cam_z_f1
     P5.noStroke()
-    P5.fill(255, 220, 100)
+    P5.fill(65, 209, 139)
     P5.sphere(r)
-    P5.fill(255, 240, 150, 100)
+    P5.fill(65, 209, 139, 100)
     P5.sphere(r * 1.35)
     P5.pop()
 
@@ -2271,4 +2369,3 @@ def set_virus_uniforms(shader, prog_t):
     shader.setUniform("uVirusSpikeW",   float(vp["spike_w"]   / sc))
     shader.setUniform("uVirusBodyCol",  _to_js([br/255.0, bg/255.0, bb/255.0]))
     shader.setUniform("uVirusSpikeCol", _to_js([sr/255.0, sg/255.0, sb/255.0]))
-
