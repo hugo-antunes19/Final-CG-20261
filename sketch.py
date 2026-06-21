@@ -4,13 +4,13 @@
 # ---------------------------------------------------------------------------
 #  Fase 1: Túnel Epitelial — desvie dos cílios (Bézier 3D), infecte células
 #  Fase 2: Tubo Sanguíneo  — endless runner com raymarching SDF
+#  Fase 3: Cérebro - sistema nervoso sendo colonizado pelo vírus (WIP)
 #
 #  Controles: SETAS / WASD = mover   |   ESPAÇO = começar / reiniciar
 # ===========================================================================
 
 import math
 import random
-# from js import window as P5
 
 try:
     _to_js = js_array            # helper fornecido pelo Py5Script
@@ -20,50 +20,109 @@ except NameError:
         return _pyto_js(x)
 
 # ---------------------------------------------------------------------------
-#  Constantes Fase 1
+#  Constantes Fase 1 — Túnel Epitelial
 # ---------------------------------------------------------------------------
-TUNNEL_RADIUS    = 220.0
-SHIP_RADIUS_F1   = 18.0
-SPEED_F1         = 3.5
-MOVE_SPEED_F1    = 6.0
-FWD_SPEED_F1  = 5.5
+TUNNEL_RADIUS    = 220.0    # Raio do cilindro do túnel (pixels)
+SHIP_RADIUS_F1   = 12.0     # Raio da hitbox do vírus na Fase 1 (pixels)
+MOVE_SPEED_F1    = 6.0      # Velocidade lateral do vírus (pixels/frame)
+FWD_SPEED_F1     = 5.5      # Velocidade de avanço/recuo no eixo Z (pixels/frame)
 
-# CILIO_SPACING    = 120.0
-# CILIOS_PER_RING  = 6
-# CILIO_LEN        = 110.0
-# CILIO_RADIUS_COL = 14.0
+CELL_RADIUS      = 22.0     # Raio visual da esfera de cada célula
+CELL_COL_DIST    = SHIP_RADIUS_F1 + CELL_RADIUS  # Distância de colisão vírus↔célula
 
-CELL_SPACING     = 250.0
-CELL_RADIUS      = 22.0
-CELL_COL_DIST    = SHIP_RADIUS_F1 + CELL_RADIUS
+VIEW_DIST        = 1200.0   # Distância máxima de renderização à frente da câmera
+SEED             = 42       # Semente global para geração procedural determinística
 
-PONTOS_PARA_FASE2 = 5
-VIEW_DIST        = 1200.0
-SEED             = 42
+CILIO_RADIUS_COL = 14.0     # Raio de colisão da ponta do cílio
 
 # ---------------------------------------------------------------------------
-#  Constantes cílio — substitua as existentes
+#  Constantes Fase 2 — Corrente Sanguínea (Raymarching SDF)
 # ---------------------------------------------------------------------------
-CILIO_SPACING    = 120.0
-CILIOS_PER_RING  = 4
-CILIO_LEN        = 110.0
-CILIO_RADIUS_COL = 14.0
-
-WHIP_SEGS  = 4
-WHIP_STIFF = 0.35
-WHIP_DAMP  = 0.87
-WHIP_FORCE = 0.5
-WHIP_FREQ  = 1.2
+MAX_OBS        = 8          # Máximo de obstáculos simultâneos enviados ao shader
+TUNNEL_HALF    = 6.0        # Meio-raio do vaso sanguíneo (unidades do shader)
+SHIP_RADIUS_F2 = 0.55       # Raio do vírus na Fase 2 (= VIRUS_R no shader)
+SPACING        = 16.0       # Distância em Z entre obstáculos consecutivos
+OB_START       = 28.0       # Posição Z do primeiro obstáculo
+RIDGE_MOD      = 64.0       # Módulo para wrap de Z (evita perda de precisão float)
+META_F2        = 1000.0     # Posição Z absoluta onde o cilindro acaba e a fase termina
 
 # ---------------------------------------------------------------------------
-#  Constantes Fase 2
+#  Constantes do Vírus
 # ---------------------------------------------------------------------------
-MAX_OBS        = 8
-TUNNEL_HALF    = 6.0
-SHIP_RADIUS_F2 = 0.55
-SPACING        = 16.0
-OB_START       = 28.0
-RIDGE_MOD      = 64.0
+VIRUS_SCALE_F2   = 40.0   # 1 unidade shader ≈ 22 pixels da Fase 1
+VIRUS_R_BASE     = 12.0   # Raio inicial
+VIRUS_R_MAX_MULT = 1.55   # Multiplicador máximo
+VIRUS_SPIKES_MIN = 3      # Espinhos no início
+VIRUS_SPIKES_MAX = 10     # Espinhos ao completar a Fase 1
+
+# ---------------------------------------------------------------------------
+#  Sistema de Dificuldade
+# ---------------------------------------------------------------------------
+DIFFICULTY_PRESETS = {
+    0: {"nome": "Facil",   
+        "fase1": {
+            "cilios_ring": 2, "cilio_spc": 180.0, "cilio_max_len": 110.0, "cell_spacing": 150.0, "pontos": 3
+            },
+        "fase2": {
+            "speed_ini": 12.0
+            }},
+    1: {"nome": "Normal",  
+        "fase1": {
+            "cilios_ring": 4, "cilio_spc": 120.0, "cilio_max_len": 130.0, "cell_spacing": 200.0, "pontos": 5
+            },
+        "fase2": {
+            "speed_ini": 18.0
+            }},
+    2: {"nome": "Dificil", 
+        "fase1": {
+            "cilios_ring": 6, "cilio_spc":  80.0, "cilio_max_len": 150.0, "cell_spacing": 250.0, "pontos": 7
+            },
+        "fase2": {
+            "speed_ini": 24.0
+            }},
+}
+
+# ---------------------------------------------------------------------------
+#  Conteúdo do Tutorial
+# ---------------------------------------------------------------------------
+TUTORIAL_SLIDES = [
+    {
+        "titulo": "FASE 1 - Tunel Epitelial",
+        "corpo": [
+            "Voce e um retrovirus tentando infectar",
+            "as celulas do tecido nasal do hospedeiro.",
+            "",
+            "  > Infecte as celulas para avancar",
+            "  > Desvie dos cilios ou e game over",
+            "  > Mova-se com WASD ou setas",
+        ],
+        "dica": "Dica: os cilios balancam — antecipe o movimento!",
+    },
+    {
+        "titulo": "FASE 2 - Corrente Sanguinea",
+        "corpo": [
+            "Voce penetrou na corrente sanguinea!",
+            "",
+            "  > Desvie de hemacias e globulos brancos",
+            "  > A velocidade aumenta com o tempo",
+            "  > Sobreviva ate chegar no sistema nervoso!",
+            "",
+        ],
+        "dica": "Dica: globulos brancos sao maiores — use as bordas!",
+    },
+    {
+        "titulo": "CONTROLES",
+        "corpo": [
+            "  Mover:             WASD  /  Setas",
+            "  Pausar:            ESC",
+            "  Confirmar/Iniciar: ESPACO ou ENTER",
+            "  Avancar (debug):   ENTER  (na Fase 1)",
+            "",
+            "  Fase 2: L = toggle LOD  |  [ ] = intensidade",
+        ],
+        "dica": "",
+    },
+]
 
 # ---------------------------------------------------------------------------
 #  Shaders Fase 2
@@ -74,72 +133,214 @@ attribute vec3 aPosition;
 void main() {
   vec4 p = vec4(aPosition, 1.0);
   p.xy = p.xy * 2.0 - 1.0;
-  gl_Position = p;
+  gl_Position = vec4(p.xy, 0.9999, 1.0);
 }
 """
 
-# ---------------------------------------------------------------------------
-#  FRAGMENT SHADER  -  Raymarching da cena inteira
-# ---------------------------------------------------------------------------
 FRAG = """
 precision highp float;
 #define MAX_OBS 8
 
-uniform vec2  uResolution;
-uniform float uTime;
-uniform float uCamZ;          // avanco da camera (mod RIDGE_MOD)
-uniform vec2  uPlayer;        // deslocamento lateral da nave (x,y)
-uniform int   uObCount;
-uniform vec3  uObRel[MAX_OBS];// posicao do obstaculo relativa a camera
-uniform float uObRad[MAX_OBS];
+#define TUNNEL_BEAT_AMP 0.24   
+#define TUNNEL_BEAT_LAG 0.05   
+
+#define BEAT_ZOOM      0.12    
+#define BEAT_EXPOSURE  0.16    
+#define BEAT_REDDEN    0.06    
+#define VIGN_BASE      0.16    
+#define VIGN_BEAT      0.55    
+
+uniform vec2  uResolution;     
+uniform float uTime;           
+uniform float uCamZ;           
+uniform float uAbsZ;           // Z absoluto para os cálculos da Meta F2
+uniform vec2  uPlayer;         
+uniform int   uObCount;        
+uniform vec3  uObRel[MAX_OBS];
+uniform float uObRad[MAX_OBS]; 
 uniform float uObType[MAX_OBS];
-uniform float uHit;           // 1.0 quando bateu
+uniform float uHit;            
+uniform float uMetaZ;          // Posição de fim do túnel
 
-// ---------- SDFs primitivas ----------
-float sdSphere(vec3 p, float r){ return length(p) - r; }
-float sdBox(vec3 p, vec3 b){
-  vec3 q = abs(p) - b;
-  return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+uniform float uVirusR;          
+uniform float uVirusNSpikes;    
+uniform float uVirusSpikeLen;   
+uniform float uVirusSpikeW;     
+uniform vec3  uVirusBodyCol;    
+uniform vec3  uVirusSpikeCol;   
+
+uniform float uLodEnable;       
+uniform float uLodStrength;     
+uniform float uHeartHz;         
+uniform float uPulsePhase;      
+
+float sdSphere(vec3 p, float r){ 
+  return length(p) - r; 
 }
-float sdTorus(vec3 p, vec2 t){
-  vec2 q = vec2(length(p.xz) - t.x, p.y);
-  return length(q) - t.y;
+
+float sdCapsule(vec3 p, vec3 a, vec3 b, float r){
+  vec3 pa = p - a, ba = b - a;
+  float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+  return length(pa - ba * h) - r;
 }
 
-mat2 rot(float a){ float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
+mat2 rot(float a){ 
+  float c = cos(a), s = sin(a); 
+  return mat2(c, -s, s, c); 
+}
 
-// Obstaculo que muda de forma: mistura esfera <-> cubo <-> toro no tempo
+float hash1(float n){
+  float s = mod(floor(abs(n) * 100.0), 65537.0) + 1.0; 
+  s = mod(75.0 * s + 74.0, 65537.0);                   
+  s = mod(75.0 * s + 74.0, 65537.0);                   
+  s = mod(75.0 * s + 74.0, 65537.0);
+  return s / 65537.0;
+}
+
+float sdHemacia(vec3 p, float r){
+  float disc = max(abs(p.y) - r * 0.09, length(p.xz) - r * 0.52);
+  vec2 q = vec2(length(p.xz) - r * 0.52, p.y);
+  float edge  = length(q) - r * 0.28;
+  return min(disc, edge);
+}
+
+#define N_MICRO_MAX 24
+
+float sdGlobuloBranco(vec3 p, float r, float seed, float lod){
+  float d = sdSphere(p, r * 0.68);
+  float lp = length(p);
+  float lodMix = uLodEnable * uLodStrength;
+
+  if(lp < r * 0.52) return d;
+  if(lodMix > 0.001 && lod < 0.08) return d;
+  if(lp > r * 1.08) return d;
+
+  float hairT = mix(1.0, smoothstep(0.12, 0.82, lod), lodMix);
+  int nHair = int(mix(float(N_MICRO_MAX), mix(5.0, float(N_MICRO_MAX), hairT), lodMix));
+
+  for(int i = 0; i < N_MICRO_MAX; i++){
+    if(i >= nHair) break;
+
+    float fi = float(i);
+    float y = 1.0 - (fi + 0.5) * (2.0 / float(N_MICRO_MAX));
+    float w = sqrt(max(0.0, 1.0 - y * y));
+    float theta = fi * 2.399963 + seed * 1.37;
+    float h0 = hash1(seed + fi * 19.17);
+    float h1 = hash1(seed + fi * 41.23);
+    
+    vec3 dir = normalize(vec3(cos(theta) * w, y, sin(theta) * w)
+      + (vec3(h0, h1, fract(h0 + h1)) - 0.5) * 0.22);
+
+    float surf = r * (0.66 + 0.05 * fract(h0 * 7.1));
+    float hLen = r * (0.09 + 0.06 * fract(h1 * 11.3));
+    float hRad = r * (0.030 + 0.018 * fract(h0 * 13.7));
+    vec3 base = dir * surf;
+    
+    d = min(d, sdCapsule(p, base, base + dir * hLen, hRad));
+  }
+  return d;
+}
+
 float obstacleSDF(vec3 p, vec3 center, float r, float typ){
   vec3 rp = p - center;
-  float ph = typ + uTime * 0.6;             // fase de animacao por obstaculo
-  rp.xy = rot(ph * 0.7) * rp.xy;            // rotaciona p/ dar vida
-  rp.xz = rot(ph * 0.5) * rp.xz;
-
-  float es = sdSphere(rp, r);
-  float cu = sdBox(rp, vec3(r * 0.78));
-  float to = sdTorus(rp, vec2(r * 0.70, r * 0.32));
-
-  float a = 0.5 + 0.5 * sin(ph);            // peso esfera/cubo
-  float b = 0.5 + 0.5 * sin(ph * 0.73 + 2.1); // peso (mix) / toro
-  float m = mix(es, cu, a);
-  return mix(m, to, b);
+  float ph = typ + uTime * 0.7;
+  if(typ < 3.14){
+    rp.xz = rot(ph * 0.22) * rp.xz;
+    rp.yz = rot(ph * 0.14) * rp.yz;
+    return sdHemacia(rp, r);
+  }
+  rp.xy = rot(ph * 0.4) * rp.xy;
+  rp.xz = rot(ph * 0.3) * rp.xz;
+  float lod = clamp(1.0 - center.z / 65.0, 0.0, 1.0);
+  return sdGlobuloBranco(rp, r * 1.2, typ, lod);
 }
 
-// Tunel quadrado infinito (distancia interna ate as paredes)
+float heartPulse(float phase);
+
 float tunnelSDF(vec3 p){
   float wx = p.x + uPlayer.x;
   float wy = p.y + uPlayer.y;
-  return TUNNEL_HALF - max(abs(wx), abs(wy));
+  float wz = p.z + uCamZ;
+
+  float beat = heartPulse(uPulsePhase - wz * TUNNEL_BEAT_LAG);
+  float r    = TUNNEL_HALF - TUNNEL_BEAT_AMP * beat;
+
+  // 1. Distância para a parede interna do tubo
+  float dWall = r - length(vec2(wx, wy));
+  
+  // 2. Distância para o plano de corte (fim da fase usando o Z absoluto real)
+  float absoluteZ = p.z + uAbsZ;
+  float dEnd  = absoluteZ - uMetaZ; 
+
+  // 3. CSG Intersection: O tecido só existe se bater nas duas condições
+  float exactDist = max(dWall, dEnd);
+
+  return exactDist * 0.9;
+}
+ 
+#define VIRUS_Z    8.0
+#define MAX_SPIKES 12
+ 
+float sdVirus(vec3 p){
+  vec3 vp = p - vec3(0.0, 0.0, VIRUS_Z);
+  vp.xy = rot(uTime * 0.18) * vp.xy;
+ 
+  float R   = uVirusR;
+  float sL  = uVirusSpikeLen;
+  float sW  = uVirusSpikeW;
+  float N   = uVirusNSpikes;
+  float TAU = 6.28318530718;
+ 
+  float d = sdSphere(vp, R);
+ 
+  for(int i = 0; i < MAX_SPIKES; i++){
+    if(float(i) >= N) break;
+ 
+    float a_base = (float(i) / N) * TAU + uTime * 0.12;
+    float sway   = sin(uTime * 1.8 + float(i) * 0.9) * 0.18;
+    float tip_a  = a_base + sway;
+ 
+    vec3 base_pt = vec3(cos(a_base) * R * 0.88, sin(a_base) * R * 0.88, 0.0);
+    vec3 mid_pt  = vec3(cos(a_base + sway*0.5) * (R + sL*0.6),
+                        sin(a_base + sway*0.5) * (R + sL*0.6), 0.0);
+    vec3 tip_pt  = vec3(cos(tip_a) * (R + sL), sin(tip_a) * (R + sL), 0.0);
+ 
+    vec3 ab, ap; float h;
+    ab = mid_pt - base_pt; ap = vp - base_pt;
+    h = clamp(dot(ap,ab)/dot(ab,ab), 0.0, 1.0);
+    d = min(d, length(ap - h*ab) - sW*0.55);
+ 
+    ab = tip_pt - mid_pt; ap = vp - mid_pt;
+    h = clamp(dot(ap,ab)/dot(ab,ab), 0.0, 1.0);
+    d = min(d, length(ap - h*ab) - sW*0.55);
+ 
+    d = min(d, sdSphere(vp - tip_pt, sW));
+  }
+  return d;
 }
 
-// material: 0 = tunel, 1 = obstaculo
+vec3 virusColor(vec3 p, vec3 n, float dif, float amb, float fre){
+  vec3 vp  = p - vec3(0.0, 0.0, VIRUS_Z);
+  float distN = clamp((length(vp) - uVirusR) / uVirusSpikeLen, 0.0, 1.0);
+  vec3 base   = mix(uVirusBodyCol, uVirusSpikeCol, distN);
+  vec3 col    = base * (amb + dif * 0.9) + fre * uVirusSpikeCol * 0.5;
+  return col;
+}
+
 float mapScene(vec3 p, out float mat){
   float d = tunnelSDF(p);
   mat = 0.0;
+  
+  float vd = sdVirus(p);
+  if(vd < d){ d = vd; mat = 3.0; }
+  
   for(int i = 0; i < MAX_OBS; i++){
     if(i >= uObCount) break;
     float od = obstacleSDF(p, uObRel[i], uObRad[i], uObType[i]);
-    if(od < d){ d = od; mat = 1.0; }
+    if(od < d){ 
+      d = od; 
+      mat = uObType[i] < 3.14 ? 1.0 : 2.0; 
+    }
   }
   return d;
 }
@@ -150,230 +351,209 @@ float mapDist(vec3 p){
 }
 
 vec3 calcNormal(vec3 p){
-  vec2 e = vec2(0.0025, 0.0);
+  vec2 e = vec2(0.0025, 0.0); 
   return normalize(vec3(
     mapDist(p + e.xyy) - mapDist(p - e.xyy),
     mapDist(p + e.yxy) - mapDist(p - e.yxy),
     mapDist(p + e.yyx) - mapDist(p - e.yyx)));
 }
 
-// cor do tunel: grade luminosa + linhas de velocidade ao longo de Z (rosa/nariz)
+float thump(float cyc, float center, float w){
+  float d = cyc - center;
+  return exp(-d * d / (w * w));
+}
+
+float heartPulse(float phase){
+  float cyc = fract(phase / 6.28318530718);
+  float s1 = thump(cyc, 0.10, 0.052);          
+  float s2 = thump(cyc, 0.27, 0.048) * 0.55;   
+  return clamp(s1 + s2, 0.0, 1.0);
+}
+
+float vnoise(vec2 p){
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  float a = hash1(dot(i + vec2(0.0, 0.0), vec2(1.0, 57.0)));
+  float b = hash1(dot(i + vec2(1.0, 0.0), vec2(1.0, 57.0)));
+  float c = hash1(dot(i + vec2(0.0, 1.0), vec2(1.0, 57.0)));
+  float d = hash1(dot(i + vec2(1.0, 1.0), vec2(1.0, 57.0)));
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
 vec3 tunnelColor(vec3 p){
   float wx = p.x + uPlayer.x;
   float wy = p.y + uPlayer.y;
   float wz = p.z + uCamZ;
-  float gx = smoothstep(0.06, 0.0, abs(fract(wz * 0.25) - 0.5) - 0.46);
-  float gy = smoothstep(0.06, 0.0, abs(fract((wx + wy) * 0.5) - 0.5) - 0.46);
-  vec3 base = vec3(0.75, 0.40, 0.30);  // Rosa/nariz
-  vec3 glow = vec3(0.9, 0.6, 0.5) * (gx + gy);
-  // pulso suave correndo pelo tunel (usa p.z local p/ evitar salto no wrap)
-  glow += vec3(0.8, 0.4, 0.3) * smoothstep(0.9, 1.0, sin(p.z * 0.15 - uTime * 3.0) * 0.5 + 0.5) * 0.5;
-  return base + glow;
+  float ang = atan(wy, wx);
+
+  const float TISSUE_STRENGTH = 0.45; 
+  const float FLOW_STRENGTH   = 0.18; 
+  const float PULSE_STRENGTH  = 0.26; 
+
+  float tissue = vnoise(vec2(ang * 11.0, wz * 2.4)) * 0.5
+               + vnoise(vec2(ang * 23.0, wz * 5.2)) * 0.3
+               + vnoise(vec2(ang * 47.0, wz * 10.5)) * 0.2;
+
+  float flow = vnoise(vec2(ang * 8.0, wz * 0.12 - uTime * 0.6));
+
+  float lag    = wz * 0.16 + ang * 0.22;
+  float hrNorm = clamp((uHeartHz - 1.10) / 0.90, 0.0, 1.0);
+  float pulse  = heartPulse(uPulsePhase - lag) * (0.85 + 0.15 * hrNorm);
+
+  vec3 deep  = vec3(0.32, 0.050, 0.046); 
+  vec3 flesh = vec3(0.44, 0.078, 0.058); 
+  vec3 col   = mix(deep, flesh, clamp(tissue * TISSUE_STRENGTH + flow * FLOW_STRENGTH + 0.25, 0.0, 1.0));
+  col += vec3(0.28, 0.06, 0.045) * (pulse * PULSE_STRENGTH);
+  return col;
 }
 
 void main(){
   vec2 uv = (gl_FragCoord.xy - 0.5 * uResolution) / uResolution.y;
 
-  vec3 ro = vec3(0.0);                          // camera na origem (espaco local)
-  vec3 rd = normalize(vec3(uv, 1.45));          // olhando para +Z
+  float beatCam = heartPulse(uPulsePhase);
 
-  float t = 0.0;
-  float mat = 0.0;
-  bool hit = false;
-  for(int i = 0; i < 90; i++){
-    vec3 p = ro + rd * t;
-    float d = mapScene(p, mat);
-    if(d < 0.002){ hit = true; break; }
-    t += d;
-    if(t > 170.0) break;
+  vec3 ro = vec3(0.0);                                   
+  vec3 rd = normalize(vec3(uv, 1.45 + BEAT_ZOOM * beatCam)); 
+
+  float t = 0.0;        
+  float mat = 0.0;      
+  bool hit = false;     
+  
+  for(int i = 0; i < 150; i++){
+    vec3 p = ro + rd * t;        
+    float d = mapScene(p, mat);  
+    if(d < 0.005){               
+      hit = true; 
+      break; 
+    }
+    t += d;                      
+    if(t > 1000.0) break;         
   }
 
   vec3 col;
+  vec3 brainLight = vec3(0.85, 0.95, 1.0); 
+  vec3 darkRed = vec3(0.16, 0.025, 0.025);
+
   if(hit){
-    vec3 p = ro + rd * t;
-    vec3 n = calcNormal(p);
-    vec3 lig = normalize(vec3(0.4, 0.7, -0.5));
-    float dif = clamp(dot(n, lig), 0.0, 1.0);
-    float amb = 0.25 + 0.25 * n.y;
+    vec3 p = ro + rd * t;        
+    vec3 n = calcNormal(p);      
+    
+    // Luz apontando direto para frente (eixo Z)
+    vec3 lig = normalize(vec3(0.0, 0.0, -1.0)); 
+    
+    float dif = clamp(dot(n, lig), 0.0, 1.0);  
+    // Luz ambiente mais uniforme, dependendo menos do teto/chão
+    float amb = 0.4 + 0.1 * n.y;              
     float fre = pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), 3.0);
 
     if(mat < 0.5){
       col = tunnelColor(p) * (amb + dif * 0.5);
+    } else if(mat < 1.5){
+      vec3 oc = vec3(0.85, 0.12, 0.08); 
+      float sss = pow(clamp(dot(rd, n), 0.0, 1.0), 2.0) * 0.3;
+      col = oc * (amb + dif * 0.8 + sss) + fre * vec3(0.9, 0.2, 0.1);
+    } else if(mat < 2.5){
+      vec3 oc = vec3(0.86, 0.88, 0.91);
+      float rim = pow(fre, 1.4);
+      float lodMix = uLodEnable * uLodStrength;
+      float tex = sin(p.x * 15.0 + p.y * 19.0) * sin(p.y * 17.0 + p.z * 21.0) * 0.5 + 0.5;
+      float texAmt = lodMix * 0.10;
+      col = oc * (1.0 - texAmt + texAmt * tex) * (amb + dif * 0.92) + rim * vec3(0.95, 0.97, 1.0) * 0.45;
     } else {
-      // obstaculo: cor abstrata pulsante por posicao + fresnel quente
-      vec3 oc = 0.5 + 0.5 * cos(vec3(0.0, 2.1, 4.2) + p.z * 0.15 + uTime);
-      col = oc * (amb + dif * 0.9) + fre * vec3(1.0, 0.5, 0.2);
+      col = virusColor(p, n, dif, amb, fre);
     }
-    // nevoa por distancia (sensacao de profundidade/velocidade)
-    float fog = 1.0 - exp(-t * 0.018);
-    col = mix(col, vec3(0.01, 0.02, 0.05), fog);
+    
+    // Efeito de Névoa normal quando bate em algo
+    float fog = 1.0 - exp(-t * 0.05);
+    col = mix(col, darkRed, fog);
   } else {
-    // espaco profundo + estrelas
-    col = vec3(0.01, 0.02, 0.05);
-    vec2 sc = floor(rd.xy * 90.0);
-    float h = fract(sin(dot(sc, vec2(12.9898, 78.233))) * 43758.5453);
-    col += smoothstep(0.995, 1.0, h) * vec3(0.9);
+    // Se o raio não bateu em nada, ele escapou pelo FIM DO TÚNEL!
+    float distToHole = max(0.0, (uMetaZ - uAbsZ) / max(rd.z, 0.001));
+    float fog = 1.0 - exp(-distToHole * 0.022);
+    
+    // Fundo revela o brilho do cérebro
+    col = mix(brainLight, darkRed, fog);
   }
 
-  // flash vermelho ao colidir
+  // Efeito Bloom/Flash: Nos últimos 70 metros, ofusca a tela toda de luz
+  float flashOut = clamp((uAbsZ - (uMetaZ - 70.0)) / 70.0, 0.0, 1.0);
+  col = mix(col, brainLight, flashOut);
+
+  // Efeito de Flash Vermelho (Dano):
   col = mix(col, vec3(0.9, 0.05, 0.05), uHit * 0.6);
 
-  col = pow(col, vec3(0.4545));   // gamma
+  col *= 1.0 + BEAT_EXPOSURE * beatCam;
+  col += vec3(BEAT_REDDEN, 0.0, 0.0) * beatCam;
+  float r2 = dot(uv, uv);
+  float vignette = 1.0 - VIGN_BASE * r2 - VIGN_BEAT * beatCam * r2;
+  col *= clamp(vignette, 0.0, 1.0);
+
+  col = pow(col, vec3(0.4545));   
   gl_FragColor = vec4(col, 1.0);
 }
 """
 FRAG = FRAG.replace("TUNNEL_HALF", "%.1f" % TUNNEL_HALF)
 
+# ---------------------------------------------------------------------------
+#  Cache Global dos Cílios
+# ---------------------------------------------------------------------------
+cilio_cache = {}   
+cilio_nodes = {}   
 
-# ---------------------------------------------------------------------------
-#  Cache global — adicione junto com os outros estados globais
-# ---------------------------------------------------------------------------
-cilio_cache = {}   # (ring, ci) → (base_z, angle, length, phase)
-cilio_nodes = {}   # (ring, ci) → lista de dicts de nós com física
-
-# ---------------------------------------------------------------------------
-#  get_cilio — substitui make_cilio, nunca recria o que já existe
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-#  get_cilio — com distribuição em espiral
-# ---------------------------------------------------------------------------
-def get_cilio(ring_index, cilio_index):
-    key = (ring_index, cilio_index)
+def get_cilio(indice_anel, indice_cilio):
+    key = (indice_anel, indice_cilio)
     if key not in cilio_cache:
-        rng    = random.Random((ring_index * 997 + cilio_index * 31 + SEED) & 0xFFFFFFFF)
-        base_z = ring_index * CILIO_SPACING
+        rng    = random.Random((indice_anel * 997 + indice_cilio * 31 + SEED) & 0xFFFFFFFF)
+        posicao_z = indice_anel * eff_cilio_spacing
         
-        # --- O SEGREDO DO ESPAÇAMENTO ESPIRAL ---
-        # Multiplicamos o número do aro por 30 graus (convertidos para radianos)
-        # Aro 0 = 0°, Aro 1 = 30°, Aro 2 = 60°, etc...
-        offset_anel = ring_index * math.radians(30)
+        giro_espiral = indice_anel * math.radians(30)
+        angulo = (indice_cilio / max(1, eff_cilios_per_ring)) * math.tau + giro_espiral + rng.uniform(-0.15, 0.15)
         
-        # O ângulo final é: A posição base (0, 90, 180...) + O giro do anel + Uma leve aleatoriedade natural
-        angle  = (cilio_index / CILIOS_PER_RING) * math.tau + offset_anel + rng.uniform(-0.15, 0.15)
-        
-        length = rng.uniform(CILIO_LEN * 0.5, CILIO_LEN)
-        phase  = rng.uniform(0, math.tau)
-        cilio_cache[key] = (base_z, angle, length, phase)
+        comprimento = rng.uniform(eff_cilio_max_length * 0.5, eff_cilio_max_length)
+        fase = rng.uniform(0, math.tau)
+        cilio_cache[key] = (posicao_z, angulo, comprimento, fase)
     return cilio_cache[key]
 
-# ---------------------------------------------------------------------------
-#  init_cilio_nodes — cria a cadeia de física na primeira vez
-# ---------------------------------------------------------------------------
-def init_cilio_nodes(key, bx, by, bz, inx, iny, length):
-    seg = length / WHIP_SEGS
-    nodes = []
-    for i in range(WHIP_SEGS + 1):
-        nodes.append({
-            'x':  bx + inx * seg * i,
-            'y':  by + iny * seg * i,
-            'vx': 0.0,
-            'vy': 0.0,
-            # rest_x/rest_y: posição de repouso ABSOLUTA do nó i
-            'rx': bx + inx * seg * i,
-            'ry': by + iny * seg * i,
-        })
-    cilio_nodes[key] = nodes
-
-# ---------------------------------------------------------------------------
-#  update_cilio_nodes — física de chicote, chamada 1x por frame por cílio
-# ---------------------------------------------------------------------------
-def update_cilio_nodes(key, bx, by, inx, iny, phase, t, dt):
-    nodes = cilio_nodes[key]
-
-    # Raiz sempre na parede — nunca se move
-    nodes[0]['x'] = bx
-    nodes[0]['y'] = by
-
-    # Direção perpendicular ao eixo radial (plano XY)
-    perp_x = -iny
-    perp_y =  inx
-
-    SUBSTEPS = 4
-    sdt = dt / SUBSTEPS
-
-    for _ in range(SUBSTEPS):
-        for i in range(1, WHIP_SEGS + 1):
-            n  = nodes[i]
-            np = nodes[i - 1]
-
-            # Mola: puxa de volta para posição de repouso relativa ao nó anterior
-            # repouso relativo = nó i de repouso - nó i-1 de repouso
-            rest_rel_x = nodes[i]['rx'] - nodes[i-1]['rx']
-            rest_rel_y = nodes[i]['ry'] - nodes[i-1]['ry']
-
-            target_x = np['x'] + rest_rel_x
-            target_y = np['y'] + rest_rel_y
-
-            dx = n['x'] - target_x
-            dy = n['y'] - target_y
-
-            # Força oscilatória cresce linearmente da base à ponta
-            amp = WHIP_FORCE * (i / WHIP_SEGS)
-            fx = -dx * WHIP_STIFF + perp_x * amp * math.sin(t * WHIP_FREQ       + phase + i * 0.5)
-            fy = -dy * WHIP_STIFF + perp_y * amp * math.sin(t * WHIP_FREQ * 0.8 + phase + i * 0.4)
-
-            n['vx'] = (n['vx'] + fx * sdt) * WHIP_DAMP
-            n['vy'] = (n['vy'] + fy * sdt) * WHIP_DAMP
-            n['x'] += n['vx']
-            n['y'] += n['vy']
-
-# ---------------------------------------------------------------------------
-#  collect_visible_cilios — agora usa get_cilio (sem recriar)
-# ---------------------------------------------------------------------------
 def collect_visible_cilios():
-    z0 = cam_z_f1 - 50.0
-    z1 = cam_z_f1 + VIEW_DIST
-    r0 = max(0, int(z0 // CILIO_SPACING))
-    r1 = int(z1 // CILIO_SPACING) + 1
+    z_inicio = cam_z_f1 - 50.0
+    z_fim = cam_z_f1 + VIEW_DIST
+    anel_inicio = max(0, int(z_inicio // eff_cilio_spacing))
+    anel_fim = int(z_fim // eff_cilio_spacing) + 1
     return [
-        ((ri, ci), *get_cilio(ri, ci))
-        for ri in range(r0, r1)
-        for ci in range(CILIOS_PER_RING)
+        (get_cilio(anel, cilio))
+        for anel in range(anel_inicio, anel_fim)
+        for cilio in range(eff_cilios_per_ring)
     ]
 
-# ---------------------------------------------------------------------------
-#  draw_cilio — substitui a versão antiga inteira
-# ---------------------------------------------------------------------------
-def draw_cilio(key, base_z, angle, length, phase, t, dt):
-    # 1. Posição da base na parede do túnel
+def draw_cilio( base_z, angle, length, phase, t):
     bx  = math.cos(angle) * TUNNEL_RADIUS
     by  = math.sin(angle) * TUNNEL_RADIUS
     
-    # 2. Vetores de Direção
-    # Vetor apontando para o centro (crescimento normal do cílio)
     inx = -math.cos(angle)
     iny = -math.sin(angle)
-    # Vetor perpendicular (para fazer o cílio balançar de um lado para o outro)
     perp_x = -iny
     perp_y = inx
 
-    # 3. A Mágica do Chicote: Atraso de Fase (Phase Delay)
-    freq = 1.2 # Velocidade do chicote
+    freq = 1.2 
     
-    # Base (P0) - Fixa na parede
     p0x, p0y, p0z = bx, by, base_z
     
-    # Ponto de Controle 1 (P1) - 1/3 do tamanho, balança um pouco
     sway1 = math.sin(t * freq + phase) * (length * 0.3)
     p1x = bx + inx * (length * 0.33) + perp_x * sway1
     p1y = by + iny * (length * 0.33) + perp_y * sway1
     p1z = base_z
     
-    # Ponto de Controle 2 (P2) - 2/3 do tamanho. 
-    # NOTE O "- 1.0" NO SENO: Ele faz o movimento atrasado em relação ao P1!
     sway2 = math.sin(t * freq + phase - 1.0) * (length * 0.5)
     p2x = bx + inx * (length * 0.66) + perp_x * sway2
     p2y = by + iny * (length * 0.66) + perp_y * sway2
     p2z = base_z
     
-    # Ponta (P3) - Final do cílio. 
-    # NOTE O "- 2.0": A ponta é a última a receber a onda do chicote!
     sway3 = math.sin(t * freq + phase - 2.0) * (length * 0.8)
     p3x = bx + inx * length + perp_x * sway3
     p3y = by + iny * length + perp_y * sway3
     p3z = base_z
 
-    # 4. Renderização da Curva
     pulse = 0.6 + 0.4 * math.sin(t * 2.2 + phase)
     v = int(30 + pulse * 60)
     P5.stroke(v, v, v, 210)
@@ -385,22 +565,20 @@ def draw_cilio(key, base_z, angle, length, phase, t, dt):
     P5.bezierVertex(p1x, p1y, p1z, p2x, p2y, p2z, p3x, p3y, p3z)
     P5.endShape()
 
-    # 5. Colisão (Checa se o vírus bateu na ponta do chicote)
     dz  = base_z - cam_z_f1
     if abs(dz) < CILIO_RADIUS_COL + SHIP_RADIUS_F1:
-        if math.hypot(p3x - px_f1, p3y - py_f1) < CILIO_RADIUS_COL + SHIP_RADIUS_F1:
-            return True
+        tip_radius = CILIO_RADIUS_COL + SHIP_RADIUS_F1
+        body_radius = SHIP_RADIUS_F1 + 4.0
+        
+        if math.hypot(p1x - px_f1, p1y - py_f1) < body_radius: return True
+        if math.hypot(p2x - px_f1, p2y - py_f1) < body_radius: return True
+        if math.hypot(p3x - px_f1, p3y - py_f1) < tip_radius: return True
     return False
 
 # ---------------------------------------------------------------------------
-#  Estado global
+#  Estado Global do Jogo
 # ---------------------------------------------------------------------------
-prog = None
-hud  = None   # createGraphics 2D — usado apenas na Fase 2
-W = H = 0
-
-state = "start"
-prev_space = False
+state = "menu"   # Estados: menu | tutorial | config | fase1 | fase2 | win | win_f2 | pausa | over
 
 # Fase 1
 cam_z_f1        = 0.0
@@ -418,314 +596,840 @@ speed     = 18.0
 score     = 0.0
 best_f2   = 0.0
 hit_flash = 0.0
+heart_hz_f2    = 1.25   
+pulse_phase_f2 = 0.0
 
-# ---------------------------------------------------------------------------
-#  Geração procedural
-# ---------------------------------------------------------------------------
+# LOD glóbulos brancos
+lod_enabled  = True    
+lod_strength = 1.0     
+prev_l       = False
+prev_lbr     = False   
+prev_rbr     = False   
 
-def make_cilio(ring_index, cilio_index):
-    rng    = random.Random((ring_index * 997 + cilio_index * 31 + SEED) & 0xFFFFFFFF)
-    base_z = ring_index * CILIO_SPACING
-    angle  = (cilio_index / CILIOS_PER_RING) * math.tau + rng.uniform(-0.2, 0.2)
-    length = rng.uniform(CILIO_LEN * 0.5, CILIO_LEN)
-    phase  = rng.uniform(0, math.tau)
-    return base_z, angle, length, phase
+difficulty  = 1          
+config_sel  = 0          
 
-def make_cell(cell_index):
-    rng = random.Random((cell_index * 1234567 + SEED) & 0xFFFFFFFF)
-    z   = CELL_SPACING + cell_index * CELL_SPACING
-    
-    # Raio do sorteio de 20% a 70% da borda do túnel
-    r   = rng.uniform(TUNNEL_RADIUS * 0.20, TUNNEL_RADIUS * 0.70)
-    a   = rng.uniform(0, math.tau)
-    
-    return z, r * math.cos(a), r * math.sin(a)
+timers      = {"fase1": 0.0, "fase2": 0.0}   
+timer_total = 0.0                              
 
-# def collect_visible_cilios():
-#     z0 = cam_z_f1 - 50.0
-#     z1 = cam_z_f1 + VIEW_DIST
-#     r0 = max(0, int(z0 // CILIO_SPACING))
-#     r1 = int(z1 // CILIO_SPACING) + 1
-#     return [make_cilio(ri, ci) for ri in range(r0, r1) for ci in range(CILIOS_PER_RING)]
+menu_sel      = 0            
+pausa_sel     = 0            
+tutorial_page = 0            
+prev_up       = False        
+prev_down     = False        
+prev_left     = False        
+prev_right    = False        
+prev_enter    = False        
+prev_esc      = False        
+
+state_antes_pausa = None     
+
+def make_cell(indice_celula):
+    rng = random.Random((indice_celula * 1234567 + SEED) & 0xFFFFFFFF)
+    posicao_z = eff_cilio_spacing + indice_celula * eff_cilio_spacing
+    raio_polar  = rng.uniform(TUNNEL_RADIUS * 0.20, TUNNEL_RADIUS * 0.70)
+    angulo = rng.uniform(0, math.tau)
+    return posicao_z, raio_polar * math.cos(angulo), raio_polar * math.sin(angulo)
 
 def collect_visible_cells():
-    z0 = cam_z_f1 - 50.0
-    z1 = cam_z_f1 + VIEW_DIST
-    i0 = max(0, int((z0 - CELL_SPACING) // CELL_SPACING))
-    i1 = int((z1 - CELL_SPACING) // CELL_SPACING) + 2
-    out = []
-    for i in range(i0, i1 + 1):
+    z_inicio = cam_z_f1 - 50.0
+    z_fim = cam_z_f1 + VIEW_DIST
+    idx_inicio = max(0, int((z_inicio - eff_cilio_spacing) // eff_cilio_spacing))
+    idx_fim = int((z_fim - eff_cilio_spacing) // eff_cilio_spacing) + 2
+    resultado = []
+    for i in range(idx_inicio, idx_fim + 1):
         if i in collected_cells:
             continue
         z, cx, cy = make_cell(i)
-        if z0 <= z <= z1:
-            out.append((i, z, cx, cy))
-    return out
+        if z_inicio <= z <= z_fim:
+            resultado.append((i, z, cx, cy))
+    return resultado
 
-def make_obstacle(n):
-    rng = random.Random((n * 2654435761) & 0xFFFFFFFF)
-    rad = rng.uniform(1.9, 3.1)
-    lim = TUNNEL_HALF - rad - 0.4
-    cx  = rng.uniform(-lim, lim)
-    cy  = rng.uniform(-lim, lim)
-    typ = rng.uniform(0.0, 6.28)
-    return OB_START + n * SPACING, cx, cy, rad, typ
+def make_obstacle(indice_obstaculo):
+    rng = random.Random((indice_obstaculo * 2654435761) & 0xFFFFFFFF)
+
+    eh_globulo = rng.random() < 0.3
+    raio = rng.uniform(2.5, 3.5) if eh_globulo else rng.uniform(1.6, 2.8)
+    
+    z_base = OB_START + indice_obstaculo * SPACING
+    tipo_visual = rng.uniform(3.15, 6.28) if eh_globulo else rng.uniform(0.0, 3.13)
+
+    p_comp = rng.random()
+    if p_comp < 0.4:
+        comportamento = 0
+    elif p_comp < 0.7:
+        comportamento = 1
+    else:
+        comportamento = 2
+
+    angulo_base = rng.uniform(0, math.tau)
+    fase = rng.uniform(0, math.tau)  
+    
+    # =======================================================
+    # FÍSICA CORRIGIDA: 
+    # O centro da célula não passa do limite geométrico.
+    # O -0.05 é uma tolerância microscópica para o SDF não fundir as texturas.
+    # =======================================================
+    limite_extremo = TUNNEL_HALF - raio - 0.05
+
+    if comportamento == 0:
+        dist_centro = rng.uniform(0.0, limite_extremo * 0.5) 
+        freq = rng.uniform(0.04, 0.08)      
+    elif comportamento == 1:
+        dist_centro = rng.uniform(limite_extremo * 0.7, limite_extremo) 
+        freq = rng.uniform(0.015, 0.035)                
+    else:
+        dist_centro = limite_extremo                 
+        freq = rng.uniform(0.02, 0.05)       
+
+    return z_base, raio, tipo_visual, comportamento, angulo_base, dist_centro, freq, fase
 
 def collect_obstacles():
-    base  = int((cam_z_f2 - OB_START) // SPACING)
-    rel, rads, types = [], [], []
-    count = 0
-    n = max(0, base - 1)
-    while count < MAX_OBS and n < base + MAX_OBS + 2:
-        z, cx, cy, rad, typ = make_obstacle(n)
-        relz = z - cam_z_f2
-        n += 1
-        if relz < -1.0 or relz > 150.0:
+    indice_base = int((cam_z_f2 - OB_START) // SPACING)
+    posicoes_relativas, raios, tipos = [], [], []
+    contagem = 0
+    n = max(0, indice_base - 1)
+    
+    while contagem < MAX_OBS and n < indice_base + MAX_OBS + 2:
+        z_base, raio, tipo, comp, ang_base, dist, freq, fase = make_obstacle(n)
+        
+        # Evita gerar obstáculos após a linha de chegada
+        if z_base > META_F2 - 20.0:
+            n += 1
             continue
-        rel.extend([cx - px_f2, cy - py_f2, relz])
-        rads.append(rad)
-        types.append(typ)
-        count += 1
-    while len(rads) < MAX_OBS:
-        rel.extend([0.0, 0.0, 9999.0])
-        rads.append(0.0)
-        types.append(0.0)
-    return rel, rads, types, count
 
-# ---------------------------------------------------------------------------
-#  Reset
-# ---------------------------------------------------------------------------
+        # A distância em Z do obstáculo até a câmera
+        dist_z = z_base - cam_z_f2
+        
+        # =======================================================
+        # SISTEMA DE PADRÕES AUTÔNOMOS (O "Tempo" é o cam_z_f2)
+        # =======================================================
+        if comp == 0:
+            # NORMAL: Fica na sua faixa, apenas tremendo (drift suave)
+            anim = math.sin(cam_z_f2 * freq + fase) * 0.5
+            cx = math.cos(ang_base) * dist + anim
+            cy = math.sin(ang_base) * dist + anim
+            
+        elif comp == 1:
+            # ORBITAL: Fica girando colado nas paredes do vaso.
+            # Metade gira em sentido horário, metade anti-horário
+            dir_giro = 1.0 if n % 2 == 0 else -1.0
+            angulo_atual = ang_base + (cam_z_f2 * freq * dir_giro)
+            cx = math.cos(angulo_atual) * dist
+            cy = math.sin(angulo_atual) * dist
+            
+        else:
+            # VARREDOR: Faz um pêndulo rasgando o vaso de uma extremidade à outra
+            oscilacao = math.sin(cam_z_f2 * freq + fase) # Oscila perfeitamente de -1 a 1
+            cx = math.cos(ang_base) * (dist * oscilacao)
+            cy = math.sin(ang_base) * (dist * oscilacao)
+        # =======================================================
+
+        n += 1
+
+        # Culling: descarta quem já ficou para trás ou está longe na névoa
+        if dist_z < -1.0 or dist_z > 150.0:
+            continue
+
+        posicoes_relativas.extend([cx - px_f2, cy - py_f2, dist_z])
+        raios.append(raio)
+        tipos.append(tipo)
+        contagem += 1
+    
+    # Preenche slots não utilizados do Shader com dados inertes
+    while len(raios) < MAX_OBS:
+        posicoes_relativas.extend([0.0, 0.0, 9999.0])
+        raios.append(0.0)
+        tipos.append(0.0)
+
+    return posicoes_relativas, raios, tipos, contagem
 
 def reset_fase_1():
     global cam_z_f1, px_f1, py_f1, pontos, collected_cells, state
-    global cilio_cache, cilio_nodes   # ← adicione
+    global cilio_cache, cilio_nodes, score
 
-    cilio_cache.clear()   # ← limpa ao reiniciar
-    cilio_nodes.clear()
+    apply_difficulty()        
+    cilio_cache.clear()       
+    cilio_nodes.clear()       
     
-    P5.camera()
-    P5.perspective()
+    P5.camera()               
+    P5.perspective()          
 
     cam_z_f1 = px_f1 = py_f1 = 0.0
     pontos = 0
+    score = 0.0
     collected_cells = set()
+    timers["fase1"] = 0.0     
+    timers["fase2"] = 0.0     
     state = "fase1"
 
 def reset_fase_2():
     global cam_z_f2, px_f2, py_f2, speed, score, hit_flash, state
+    global heart_hz_f2, pulse_phase_f2
+
+    apply_difficulty()       
 
     P5.camera()
     P5.perspective()
 
     cam_z_f2 = px_f2 = py_f2 = 0.0
-    speed = 18.0
-    score = hit_flash = 0.0
+    speed          = eff_speed_ini_f2   
+    score          = hit_flash = 0.0
+    heart_hz_f2    = 1.25
+    pulse_phase_f2 = 0.0
+    timers["fase2"] = 0.0    
     state = "fase2"
 
-# ---------------------------------------------------------------------------
-#  setup
-# ---------------------------------------------------------------------------
-
 def setup():
-    global prog, hud, W, H
-    P5.createCanvas(900, 600, P5.WEBGL)
-    P5.pixelDensity(1)
+    global prog, hud, W, H, overlay_div
+    P5.createCanvas(900, 600, P5.WEBGL)  
+    P5.pixelDensity(1)                   
     W, H = P5.width, P5.height
-    prog = P5.createShader(VERT, FRAG)
-    # hud é um buffer 2D separado — só usado na fase 2 (shader precisa de resetShader antes do image)
-    hud = P5.createGraphics(W, H)
-
-# ---------------------------------------------------------------------------
-#  draw
-# ---------------------------------------------------------------------------
+    prog = P5.createShader(VERT, FRAG)   
+    hud = P5.createGraphics(W, H)        
+    
+    overlay_div = None
+    try:
+        from js import document
+        overlay_div = document.createElement("div")
+        overlay_div.id = "global_hud_overlay"
+        overlay_div.style.position = "absolute"
+        overlay_div.style.top = "20px"
+        overlay_div.style.right = "20px"
+        overlay_div.style.color = "#FFD278"
+        overlay_div.style.fontFamily = "monospace"
+        overlay_div.style.fontSize = "18px"
+        overlay_div.style.backgroundColor = "rgba(20,8,10,0.8)"
+        overlay_div.style.padding = "12px"
+        overlay_div.style.borderRadius = "8px"
+        overlay_div.style.pointerEvents = "none"
+        overlay_div.style.zIndex = "9999"
+        overlay_div.style.display = "none"
+        overlay_div.style.border = "1px solid rgba(255,255,255,0.2)"
+        
+        document.body.appendChild(overlay_div)
+    except:
+        pass
 
 def draw():
-
     P5.background(220, 180, 140)
 
-    if state == "start":
-        draw_menu("RETROVIRUS",
-                  "Fase 1: O Tunel Epitelial",
-                  "ESPACO para comecar")
+    if   state == "menu":     draw_menu_principal()
+    elif state == "tutorial": draw_tutorial()
+    elif state == "config":   draw_config()
+    elif state == "fase1":    P5.push(); draw_fase_1(); P5.pop()
+    elif state == "fase2":    P5.push(); draw_fase_2(); P5.pop()
+    elif state == "win":      draw_win_screen()
+    elif state == "win_f2":   draw_win_f2_screen()
+    elif state == "pausa":    draw_pausa()
+    elif state == "over":     draw_game_over()
 
-    elif state == "fase1":
-        push()
-        draw_fase_1()
-        pop()
+    handle_esc()        
+    handle_menu_nav()   
+    handle_lod()        
 
-    elif state == "fase2":
-        push()
-        draw_fase_2()
-        pop()
+    global overlay_div
+    if 'overlay_div' in globals() and overlay_div:
+        try:
+            if state in ("fase1", "fase2", "pausa"):
+                pt_total = int(pontos * 100 + score)
+                tempo = _fmt_time(timers["fase1"] + timers["fase2"])
+                overlay_div.innerHTML = f"<b>PONTUAÇÃO GLOBAL:</b> {pt_total}<br><br><b>TEMPO TOTAL:</b> {tempo}"
+                overlay_div.style.display = "block"
+                
+                from js import document, window
+                canvas_elt = document.querySelector("canvas")
+                if canvas_elt:
+                    rect = canvas_elt.getBoundingClientRect()
+                    abs_top = window.scrollY + rect.top
+                    abs_left = window.scrollX + rect.left
+                    
+                    overlay_div.style.top = f"{abs_top + 20}px"
+                    overlay_div.style.left = f"{abs_left + rect.width - 20}px"
+                    overlay_div.style.right = "auto"
+                    overlay_div.style.transform = "translateX(-100%)"
+            else:
+                overlay_div.style.display = "none"
+        except:
+            pass
 
-    elif state == "over":
-        draw_menu("COLISAO!",
-                  "Infectou %d celulas" % pontos,
-                  "ESPACO para reiniciar")
+def handle_esc():
+    global state, state_antes_pausa, pausa_sel, prev_esc
+    esc   = P5.keyIsDown(27)
+    esc_p = esc and not prev_esc
 
-    elif state == "win":
-        draw_menu("FASE 1 COMPLETA!",
-                  "Infectou %d celulas" % pontos,
-                  "ESPACO para a Fase 2")
-    handle_space()
-    
+    if esc_p:
+        if state in ("fase1", "fase2"):
+            state_antes_pausa = state   
+            pausa_sel         = 0
+            state             = "pausa"
+        elif state == "pausa":
+            state = state_antes_pausa   
+        elif state in ("tutorial", "config", "win", "win_f2", "over"):
+            state = "menu"
 
-# ---------------------------------------------------------------------------
-#  handle_space  — edge detection, só ESPAÇO
-# ---------------------------------------------------------------------------
+    prev_esc = esc
 
-def handle_space():
-    global prev_space
-    # comeca/reinicia com ESPACO ou qualquer tecla de movimento
-    down = (P5.keyIsDown(32)
-            or P5.keyIsDown(P5.LEFT_ARROW) or P5.keyIsDown(65)
-            or P5.keyIsDown(P5.RIGHT_ARROW) or P5.keyIsDown(68)
-            or P5.keyIsDown(P5.UP_ARROW) or P5.keyIsDown(87)
-            or P5.keyIsDown(P5.DOWN_ARROW) or P5.keyIsDown(83))
-    if down and not prev_space:
-        if state in ("start", "over"):
-            reset_fase_1()
-        elif state == "win":
-            reset_fase_2()
-    prev_space = down
+def handle_menu_nav():
+    global prev_up, prev_down, prev_left, prev_right, prev_enter
 
-# ---------------------------------------------------------------------------
-#  Menu / telas estáticas — desenhadas direto no canvas WEBGL com texto 2D
-#  Usamos ortho + translate para poder usar text() no modo WEBGL
-# ---------------------------------------------------------------------------
+    up    = P5.keyIsDown(P5.UP_ARROW)
+    down  = P5.keyIsDown(P5.DOWN_ARROW)
+    left  = P5.keyIsDown(P5.LEFT_ARROW)
+    right = P5.keyIsDown(P5.RIGHT_ARROW)
+    enter = P5.keyIsDown(13) or P5.keyIsDown(32)   
 
-# def draw_menu(title, line2, line3):
-#     P5.background(10, 15, 25)
-#     P5.resetShader()
-#     P5.ortho()
-#     P5.noLights()
+    up_p    = up    and not prev_up
+    down_p  = down  and not prev_down
+    left_p  = left  and not prev_left
+    right_p = right and not prev_right
+    enter_p = enter and not prev_enter
 
-#     # Caixa de fundo semitransparente
-#     P5.noStroke()
-#     P5.fill(0, 0, 0, 150)
-#     P5.rectMode(P5.CENTER)
-#     P5.rect(0, 0, W, 140)
-#     P5.rectMode(P5.CORNER)
+    if state in ("menu", "tutorial", "config", "win", "win_f2", "over", "pausa"):
+        _nav_action(up_p, down_p, left_p, right_p, enter_p)
 
-#     # Título
-#     P5.textAlign(P5.CENTER, P5.CENTER)
-#     P5.fill(255, 230, 120)
-#     P5.textSize(34)
-#     P5.text(title, 0, -28)
+    prev_up,    prev_down  = up,   down
+    prev_left,  prev_right = left, right
+    prev_enter = enter
 
-#     # Linha 2
-#     P5.fill(220, 220, 220)
-#     P5.textSize(18)
-#     P5.text(line2, 0, 4)
+def handle_lod():
+    global lod_enabled, lod_strength, prev_l, prev_lbr, prev_rbr
+    if state != "fase2":
+        return
 
-#     # Linha 3
-#     P5.fill(150, 230, 255)
-#     P5.text(line3, 0, 34)
+    l_down = P5.keyIsDown(76)
+    if l_down and not prev_l:
+        lod_enabled = not lod_enabled
+    prev_l = l_down
 
-#     P5.textAlign(P5.LEFT, P5.BASELINE)
+    lb_down = P5.keyIsDown(219)
+    if lb_down and not prev_lbr and lod_enabled:
+        lod_strength = max(0.0, lod_strength - 0.1)
+    prev_lbr = lb_down
 
-# def draw_menu(title, line2, line3):
-#     P5.background(10, 15, 25)
-#     P5.resetShader()
-    
-#     # Limpa o buffer 2D para desenhar o menu
-#     hud.clear()
-    
-#     # Caixa de fundo semitransparente
-#     hud.noStroke()
-#     hud.fill(0, 0, 0, 150)
-#     hud.rectMode(P5.CENTER)
-#     hud.rect(W / 2, H / 2, W, 140)
-#     hud.rectMode(P5.CORNER)
+    rb_down = P5.keyIsDown(221)
+    if rb_down and not prev_rbr and lod_enabled:
+        lod_strength = min(1.0, lod_strength + 0.1)
+    prev_rbr = rb_down
 
-#     # Título
-#     hud.textAlign(P5.CENTER, P5.CENTER)
-#     hud.fill(255, 230, 120)
-#     hud.textSize(34)
-#     hud.text(title, W / 2, H / 2 - 28)
+def _fmt_time(seconds):
+    s = int(seconds)
+    return "%d:%02d" % (s // 60, s % 60)
 
-#     # Linha 2
-#     hud.fill(220, 220, 220)
-#     hud.textSize(18)
-#     hud.text(line2, W / 2, H / 2 + 4)
-
-#     # Linha 3
-#     hud.fill(150, 230, 255)
-#     hud.text(line3, W / 2, H / 2 + 34)
-
-#     hud.textAlign(P5.LEFT, P5.BASELINE)
-    
-#     # Carimba o buffer na tela WEBGL
-#     P5.image(hud, -W / 2, -H / 2, W, H)
-
-def draw_menu(title, line2, line3):
-    P5.background(220, 180, 140)
+def _hud_setup():
     P5.resetShader()
-    
-    # === A MÁGICA AQUI: Reseta a câmera 3D para o padrão ===
     P5.camera()
     P5.perspective()
-    
-    # Limpa o buffer 2D para desenhar o menu
-    hud.clear()
-    
-    # Caixa de fundo semitransparente
+
+def _hud_stamp():
+    P5.image(hud, -W / 2, -H / 2, W, H)
+    P5.perspective(P5.PI / 3.6, float(W) / float(H), 1.0, 5000.0)
+
+def _hud_panel(cx, cy, w, h, r=10):
+    hud.fill(35, 12, 20, 225)
+    hud.stroke(160, 70, 90, 160)
+    hud.strokeWeight(1.5)
+    hud.rect(cx - w / 2, cy - h / 2, w, h, r)
     hud.noStroke()
-    hud.fill(120, 80, 80, 180)
-    hud.rectMode(P5.CENTER)
-    hud.rect(W / 2, H / 2, W, 140)
-    hud.rectMode(P5.CORNER)
 
-    # Título
+def apply_difficulty():
+    global eff_cilios_per_ring, eff_cilio_spacing, eff_cilio_max_length, eff_pontos_para_fase2, eff_speed_ini_f2
+    p = DIFFICULTY_PRESETS[difficulty]
+    eff_cilios_per_ring   = p["fase1"]["cilios_ring"]
+    eff_cilio_spacing     = p["fase1"]["cilio_spc"]
+    eff_cilio_max_length = p["fase1"]["cilio_max_len"]
+    eff_pontos_para_fase2 = p["fase1"]["pontos"]
+    eff_speed_ini_f2      = p["fase2"]["speed_ini"]
+
+def update_timer(phase_key, dt):
+    if phase_key in timers:
+        timers[phase_key] += dt
+
+def _ir_para_tutorial():
+    global state, tutorial_page
+    tutorial_page = 0
+    state = "tutorial"
+
+def _ir_para_config():
+    global state, config_sel
+    config_sel = 0
+    state = "config"
+
+def _config_change_value(going_left):
+    global difficulty, lod_enabled, lod_strength
+    n_diff = len(DIFFICULTY_PRESETS)
+    if config_sel == 0:        
+        step = -1 if going_left else 1
+        difficulty = (difficulty + step) % n_diff
+    elif config_sel == 1:      
+        lod_enabled = not lod_enabled
+    elif config_sel == 2:      
+        if lod_enabled:
+            lod_strength = max(0.0, min(1.0, lod_strength + (-0.1 if going_left else 0.1)))
+
+def _confirm_pausa():
+    global state
+    if pausa_sel == 0:          
+        state = state_antes_pausa
+    elif pausa_sel == 1:        
+        if   state_antes_pausa == "fase1": reset_fase_1()
+        elif state_antes_pausa == "fase2": reset_fase_2()
+        else:                              state = state_antes_pausa
+    elif pausa_sel == 2:        
+        state = "menu"
+
+def _nav_action(up_p, down_p, left_p, right_p, enter_p):
+    global state, menu_sel, tutorial_page, config_sel, pausa_sel
+
+    if state == "menu":
+        MENU_COUNT = 3
+        if up_p:   menu_sel = (menu_sel - 1) % MENU_COUNT
+        if down_p: menu_sel = (menu_sel + 1) % MENU_COUNT
+        if enter_p:
+            if   menu_sel == 0: reset_fase_1()
+            elif menu_sel == 1: _ir_para_tutorial()
+            elif menu_sel == 2: _ir_para_config()
+
+    elif state == "tutorial":
+        n = len(TUTORIAL_SLIDES)
+        if right_p: tutorial_page = min(tutorial_page + 1, n - 1)
+        if left_p:  tutorial_page = max(tutorial_page - 1, 0)
+        if enter_p: state = "menu"
+
+    elif state == "config":
+        CONFIG_COUNT = 3
+        if up_p:   config_sel = (config_sel - 1) % CONFIG_COUNT
+        if down_p: config_sel = (config_sel + 1) % CONFIG_COUNT
+        if (left_p or right_p): _config_change_value(left_p)
+        if enter_p: state = "menu"
+
+    elif state == "win":
+        if enter_p: reset_fase_2()
+        
+    elif state == "win_f2":
+        if enter_p: state = "menu" 
+
+    elif state == "over":
+        if enter_p: reset_fase_1()
+
+    elif state == "pausa":
+        PAUSA_COUNT = 3
+        if up_p:   pausa_sel = (pausa_sel - 1) % PAUSA_COUNT
+        if down_p: pausa_sel = (pausa_sel + 1) % PAUSA_COUNT
+        if enter_p: _confirm_pausa()
+
+def draw_menu_principal():
+    _hud_setup()
+    hud.clear()
+
+    hud.noStroke()
+    hud.fill(15, 5, 10, 245)
+    hud.rect(0, 0, W, H)
+
+    cx = W / 2
+    t  = P5.millis() / 1000.0
+    pulse = 0.96 + 0.04 * math.sin(t * 1.8)
+
     hud.textAlign(P5.CENTER, P5.CENTER)
-    hud.fill(255, 200, 100)
-    hud.textSize(34)
-    hud.text(title, W / 2, H / 2 - 28)
 
-    # Linha 2
-    hud.fill(255, 240, 180)
-    hud.textSize(18)
-    hud.text(line2, W / 2, H / 2 + 4)
+    hud.fill(80, 10, 20, 180)
+    hud.textSize(int(54 * pulse))
+    hud.text("RETROVIRUS", cx + 2, H * 0.21 + 2)
+    hud.fill(255, 80, 80)
+    hud.textSize(int(54 * pulse))
+    hud.text("RETROVIRUS", cx, H * 0.21)
 
-    # Linha 3
-    hud.fill(200, 100, 120)
-    hud.text(line3, W / 2, H / 2 + 34)
+    hud.fill(200, 140, 140)
+    hud.textSize(14)
+    hud.text("Computacao Grafica — 2026/1", cx, H * 0.21 + 42)
+
+    hud.stroke(150, 60, 70, 120)
+    hud.strokeWeight(1)
+    hud.line(cx - 120, H * 0.36, cx + 120, H * 0.36)
+    hud.noStroke()
+
+    MENU_ITEMS = ["JOGAR", "TUTORIAL", "CONFIGURACOES"]
+    base_y, spc_y = H * 0.44, 46
+
+    for i, label in enumerate(MENU_ITEMS):
+        y = base_y + i * spc_y
+        sel = (i == menu_sel)
+        if sel:
+            hud.fill(120, 30, 40, 200)
+            hud.rect(cx - 130, y - 16, 260, 32, 6)
+            hud.fill(255, 130, 130)
+            hud.textSize(19)
+            hud.text("> " + label + " <", cx, y + 2)
+        else:
+            hud.fill(180, 120, 120)
+            hud.textSize(16)
+            hud.text(label, cx, y + 2)
+
+    if best_f2 > 0 or best_f1 > 0:
+        hud.fill(180, 140, 70, 210)
+        hud.textSize(13)
+        hud.text("Melhor — F1: %d cel   F2: %dm" % (best_f1, int(best_f2)), cx, H * 0.83)
+
+    hud.fill(120, 85, 85, 200)
+    hud.textSize(13)
+    hud.text("↑ ↓  navegar   |   ENTER / ESPACO confirmar", cx, H - 16)
 
     hud.textAlign(P5.LEFT, P5.BASELINE)
-    
-    # Carimba o buffer na tela WEBGL
-    P5.image(hud, -W / 2, -H / 2, W, H)
+    _hud_stamp()
 
-# ---------------------------------------------------------------------------
-#  Fase 1 — Túnel Epitelial (geometria 3D nativa p5.js)
-# ---------------------------------------------------------------------------
+def draw_tutorial():
+    _hud_setup()
+    hud.clear()
+
+    hud.noStroke()
+    hud.fill(12, 5, 15, 248)
+    hud.rect(0, 0, W, H)
+
+    slide = TUTORIAL_SLIDES[tutorial_page]
+    n     = len(TUTORIAL_SLIDES)
+    cx, cy = W / 2, H / 2
+
+    _hud_panel(cx, cy, 530, 350)
+
+    hud.textAlign(P5.CENTER, P5.CENTER)
+    hud.fill(255, 165, 80)
+    hud.textSize(22)
+    hud.text(slide["titulo"], cx, cy - 138)
+
+    hud.stroke(200, 110, 60, 100)
+    hud.strokeWeight(1)
+    hud.line(cx - 210, cy - 116, cx + 210, cy - 116)
+    hud.noStroke()
+
+    hud.fill(220, 205, 205)
+    hud.textSize(15)
+    for j, linha in enumerate(slide["corpo"]):
+        hud.text(linha, cx, cy - 88 + j * 24)
+
+    if slide.get("dica"):
+        hud.fill(140, 210, 130)
+        hud.textSize(13)
+        hud.text(slide["dica"], cx, cy + 112)
+
+    hud.fill(170, 130, 130)
+    hud.textSize(13)
+    hud.text("%d / %d" % (tutorial_page + 1, n), cx, cy + 135)
+
+    if tutorial_page > 0:
+        hud.fill(220, 185, 100)
+        hud.textSize(15)
+        hud.textAlign(P5.LEFT, P5.CENTER)
+        hud.text("← ANTERIOR", 30, H - 20)
+    if tutorial_page < n - 1:
+        hud.fill(220, 185, 100)
+        hud.textSize(15)
+        hud.textAlign(P5.RIGHT, P5.CENTER)
+        hud.text("PROXIMO →", W - 30, H - 20)
+
+    hud.textAlign(P5.CENTER, P5.CENTER)
+    hud.fill(120, 88, 88)
+    hud.textSize(13)
+    hud.text("ENTER / ESC = voltar ao menu", cx, H - 20)
+
+    hud.textAlign(P5.LEFT, P5.BASELINE)
+    _hud_stamp()
+
+def draw_config():
+    _hud_setup()
+    hud.clear()
+
+    hud.noStroke()
+    hud.fill(12, 5, 15, 248)
+    hud.rect(0, 0, W, H)
+
+    cx, cy = W / 2, H / 2
+    _hud_panel(cx, cy, 490, 310)
+
+    hud.textAlign(P5.CENTER, P5.CENTER)
+    hud.fill(255, 165, 80)
+    hud.textSize(22)
+    hud.text("CONFIGURACOES", cx, cy - 126)
+
+    hud.stroke(200, 110, 60, 100)
+    hud.strokeWeight(1)
+    hud.line(cx - 195, cy - 106, cx + 195, cy - 106)
+    hud.noStroke()
+
+    lod_str = "ON"  if lod_enabled else "OFF"
+    lod_int = ("%d%%" % int(lod_strength * 100)) if lod_enabled else "—"
+    CONFIG_ITEMS = [
+        ("Dificuldade",     DIFFICULTY_PRESETS[difficulty]["nome"]),
+        ("LOD Globulos",    lod_str),
+        ("LOD Intensidade", lod_int),
+    ]
+
+    base_y = cy - 56
+    for i, (label, valor) in enumerate(CONFIG_ITEMS):
+        y = base_y + i * 52
+        sel = (i == config_sel)
+        if sel:
+            hud.fill(100, 25, 35, 190)
+            hud.rect(cx - 200, y - 17, 400, 34, 5)
+            hud.fill(255, 210, 100)
+            ts = 17
+        else:
+            hud.fill(170, 150, 150)
+            ts = 15
+
+        hud.textSize(ts)
+        hud.textAlign(P5.LEFT, P5.CENTER)
+        hud.text(label, cx - 180, y)
+        hud.textAlign(P5.RIGHT, P5.CENTER)
+        hud.text(("< " if sel else "") + valor + (" >" if sel else ""), cx + 180, y)
+
+    hud.textAlign(P5.CENTER, P5.CENTER)
+    hud.fill(120, 88, 88)
+    hud.textSize(13)
+    hud.text("↑ ↓  item   |   ← →  valor   |   ENTER / ESC voltar", cx, H - 16)
+
+    hud.textAlign(P5.LEFT, P5.BASELINE)
+    _hud_stamp()
+
+def draw_win_screen():
+    _hud_setup()
+    hud.clear()
+
+    hud.noStroke()
+    hud.fill(12, 5, 15, 235)
+    hud.rect(0, 0, W, H)
+
+    cx, cy = W / 2, H / 2
+    _hud_panel(cx, cy, 430, 230)
+
+    hud.textAlign(P5.CENTER, P5.CENTER)
+
+    hud.fill(100, 255, 150)
+    hud.textSize(28)
+    hud.text("FASE 1 COMPLETA!", cx, cy - 86)
+
+    hud.stroke(80, 200, 120, 80)
+    hud.strokeWeight(1)
+    hud.line(cx - 170, cy - 62, cx + 170, cy - 62)
+    hud.noStroke()
+
+    hud.fill(220, 200, 180)
+    hud.textSize(16)
+    hud.text("Celulas infectadas: %d" % pontos, cx, cy - 34)
+    hud.text("Tempo da Fase 1:    %s"  % _fmt_time(timers["fase1"]), cx, cy - 8)
+
+    hud.stroke(160, 120, 80, 60)
+    hud.line(cx - 160, cy + 14, cx + 160, cy + 14)
+    hud.noStroke()
+
+    hud.fill(255, 200, 80)
+    hud.textSize(15)
+    hud.text("ESPACO / ENTER — entrar na Fase 2", cx, cy + 48)
+    hud.fill(140, 95, 95)
+    hud.textSize(13)
+    hud.text("ESC — voltar ao menu", cx, cy + 76)
+
+    hud.textAlign(P5.LEFT, P5.BASELINE)
+    _hud_stamp()
+
+def draw_win_f2_screen():
+    global pontos, score, timers
+    
+    _hud_setup()
+    hud.clear()
+
+    # Fundo escuro levemente avermelhado/vitória
+    hud.noStroke()
+    hud.fill(12, 5, 20, 235)
+    hud.rect(0, 0, W, H)
+
+    cx, cy = W / 2, H / 2
+    # Painel um pouco mais alto para acomodar o placar final
+    _hud_panel(cx, cy, 460, 250)
+
+    hud.textAlign(P5.CENTER, P5.CENTER)
+
+    # Título de Vitória (Verde vibrante)
+    hud.fill(100, 255, 150)
+    hud.textSize(32)
+    hud.text("VITORIA!", cx, cy - 90)
+
+    hud.stroke(80, 200, 120, 80)
+    hud.strokeWeight(1)
+    hud.line(cx - 170, cy - 62, cx + 170, cy - 62)
+    hud.noStroke()
+
+    # Subtítulo temático
+    hud.fill(220, 200, 180)
+    hud.textSize(16)
+    hud.text("O sistema do hospedeiro foi dominado.", cx, cy - 34)
+
+    # Cálculo dos totais
+    pontos_totais = int(pontos * 100 + score)
+    tempo_total = _fmt_time(timers["fase1"] + timers["fase2"])
+
+    # Placar Final em destaque (Amarelo/Dourado)
+    hud.fill(255, 210, 120)
+    hud.textSize(18)
+    hud.text("Pontuacao Total: %d" % pontos_totais, cx, cy + 2)
+    hud.text("Tempo Total: %s"  % tempo_total, cx, cy + 28)
+
+    hud.stroke(160, 120, 80, 60)
+    hud.line(cx - 160, cy + 58, cx + 160, cy + 58)
+    hud.noStroke()
+
+    # Instrução para voltar ao menu principal
+    hud.fill(255, 200, 80)
+    hud.textSize(15)
+    hud.text("ESPACO / ENTER — voltar ao menu", cx, cy + 86)
+
+    hud.textAlign(P5.LEFT, P5.BASELINE)
+    _hud_stamp()
+
+def draw_game_over():
+    _hud_setup()
+    hud.clear()
+
+    hud.noStroke()
+    hud.fill(12, 2, 5, 240)
+    hud.rect(0, 0, W, H)
+
+    cx, cy = W / 2, H / 2
+    _hud_panel(cx, cy, 490, 330)
+
+    hud.textAlign(P5.CENTER, P5.CENTER)
+
+    hud.fill(255, 60, 60)
+    hud.textSize(32)
+    hud.text("COLISAO!", cx, cy - 140)
+
+    hud.stroke(200, 60, 60, 80)
+    hud.strokeWeight(1)
+    hud.line(cx - 195, cy - 116, cx + 195, cy - 116)
+    hud.noStroke()
+
+    hud.fill(220, 200, 200)
+    hud.textSize(15)
+    hud.text("Celulas infectadas:    %d"   % pontos,      cx, cy - 84)
+    hud.text("Distancia percorrida:  %dm"  % int(score),  cx, cy - 58)
+
+    hud.stroke(160, 80, 80, 60)
+    hud.line(cx - 165, cy - 36, cx + 165, cy - 36)
+    hud.noStroke()
+
+    hud.fill(180, 180, 165)
+    hud.textSize(14)
+    hud.text("Tempo F1: %s   |   Tempo F2: %s" % (
+        _fmt_time(timers["fase1"]), _fmt_time(timers["fase2"])), cx, cy - 10)
+    hud.text("Tempo total: %s" % _fmt_time(timer_total), cx, cy + 16)
+
+    if best_f2 > 0 or best_f1 > 0:
+        hud.stroke(160, 135, 50, 80)
+        hud.line(cx - 165, cy + 38, cx + 165, cy + 38)
+        hud.noStroke()
+        hud.fill(225, 195, 80)
+        hud.textSize(14)
+        hud.text("★  Melhor — F1: %d cel   F2: %dm" % (
+            best_f1, int(best_f2)), cx, cy + 62)
+
+    hud.fill(200, 165, 100)
+    hud.textSize(14)
+    hud.text("ESPACO / ENTER — tentar novamente", cx, cy + 108)
+    hud.fill(140, 95, 95)
+    hud.textSize(13)
+    hud.text("ESC — voltar ao menu", cx, cy + 134)
+
+    hud.textAlign(P5.LEFT, P5.BASELINE)
+    _hud_stamp()
+
+def draw_pausa():
+    _hud_setup()
+    hud.clear()
+
+    hud.noStroke()
+    hud.fill(5, 2, 8, 215)
+    hud.rect(0, 0, W, H)
+
+    cx, cy = W / 2, H / 2
+    _hud_panel(cx, cy, 370, 250)
+
+    hud.textAlign(P5.CENTER, P5.CENTER)
+
+    hud.fill(200, 220, 255)
+    hud.textSize(26)
+    hud.text("|| PAUSADO ||", cx, cy - 92)
+
+    hud.stroke(130, 150, 210, 80)
+    hud.strokeWeight(1)
+    hud.line(cx - 145, cy - 70, cx + 145, cy - 70)
+    hud.noStroke()
+
+    PAUSA_ITEMS = ["RETOMAR  (ESC / ESPACO)", "REINICIAR FASE", "MENU PRINCIPAL"]
+    base_y = cy - 30
+
+    for i, label in enumerate(PAUSA_ITEMS):
+        y = base_y + i * 46
+        sel = (i == pausa_sel)
+        if sel:
+            hud.fill(75, 55, 115, 190)
+            hud.rect(cx - 160, y - 15, 320, 30, 5)
+            hud.fill(200, 220, 255)
+            hud.textSize(16)
+        else:
+            hud.fill(145, 155, 195)
+            hud.textSize(14)
+        hud.text(label, cx, y)
+
+    hud.fill(95, 88, 118)
+    hud.textSize(12)
+    hud.text("↑ ↓  navegar   |   ENTER confirmar", cx, H - 16)
+
+    hud.textAlign(P5.LEFT, P5.BASELINE)
+    _hud_stamp()
+
+def virus_params(prog_t):
+    virus_r   = _lerp(VIRUS_R_BASE, VIRUS_R_BASE * VIRUS_R_MAX_MULT, prog_t)
+    n_spikes  = VIRUS_SPIKES_MIN + int(prog_t * (VIRUS_SPIKES_MAX - VIRUS_SPIKES_MIN))
+    spike_len = _lerp(8.0, 22.0, prog_t)
+    spike_w   = _lerp(2.5,  5.0, prog_t)
+ 
+    br = int(_lerp(175, 195, prog_t))
+    bg = int(_lerp(95,   18, prog_t))
+    bb = int(_lerp(120,  48, prog_t))
+    sr = min(255, br + 50)
+    sg = min(255, bg + 67)
+    sb = min(255, bb + 62)
+ 
+    return {
+        "virus_r":    virus_r,
+        "n_spikes":   n_spikes,
+        "spike_len":  spike_len,
+        "spike_w":    spike_w,
+        "body_rgb":   (br, bg, bb),
+        "spike_rgb":  (sr, sg, sb),
+    }
 
 def draw_fase_1():
     global cam_z_f1, px_f1, py_f1, pontos, best_f1, collected_cells, state
+    global timer_total
 
     t  = P5.millis() / 1000.0
     dt = min(0.05, P5.deltaTime / 1000.0)
+    update_timer("fase1", dt)   
 
     mv = MOVE_SPEED_F1
 
-    # Lateral
     if P5.keyIsDown(P5.LEFT_ARROW)  or P5.keyIsDown(65): px_f1 += mv 
     if P5.keyIsDown(P5.RIGHT_ARROW) or P5.keyIsDown(68): px_f1 -= mv
 
-    # Vertical
     if P5.keyIsDown(P5.UP_ARROW):    py_f1 -= mv
     if P5.keyIsDown(P5.DOWN_ARROW):  py_f1 += mv
 
-    # Espaço = descer
     if P5.keyIsDown(32): py_f1 -= mv
-    # Ctrl = descer
     if P5.keyIsDown(17): py_f1 += mv
 
-    # Profundidade: W = acelera, S = freia/recua
     if P5.keyIsDown(87): cam_z_f1 += FWD_SPEED_F1
     if P5.keyIsDown(83): cam_z_f1 -= FWD_SPEED_F1 
 
-    # Limita dentro do túnel
     dist = math.hypot(px_f1, py_f1)
     lim  = TUNNEL_RADIUS - SHIP_RADIUS_F1 - 10.0
     if dist > lim and dist > 0:
@@ -734,27 +1438,21 @@ def draw_fase_1():
 
     P5.background(220, 180, 140)
 
-    P5.camera(px_f1, py_f1,        cam_z_f1 - 250.0,
+    P5.camera(px_f1, py_f1,        cam_z_f1 - 150.0,
               px_f1, py_f1,        cam_z_f1 + 300.0,
               0, 1, 0)
-    P5.perspective(P5.PI / 3.0, float(W) / float(H), 1.0, 5000.0)
+    P5.perspective(P5.PI / 3.6, float(W) / float(H), 1.0, 5000.0)
 
-    # Luzes acompanham a câmera
-    # 1. Luz ambiente cor de vinho (elimina sombras pretas secas)
-    P5.ambientLight(60, 20, 30) 
-    
-    # 2. Luz principal (da frente): Branca levemente amarelada (brilho molhado)
+    P5.ambientLight(115, 53, 68) 
     P5.pointLight(255, 230, 200, px_f1, py_f1, cam_z_f1 + 100) 
-    
-    # 3. Luz de preenchimento (trás): Rosa choque/vermelho para dar subsurface scattering
     P5.pointLight(255, 50, 80, px_f1, py_f1, cam_z_f1 - 100)
 
     draw_tunnel(t)
 
     hit_cilio = False
     for item in collect_visible_cilios():
-        key, base_z, angle, length, phase = item
-        if draw_cilio(key, base_z, angle, length, phase, t, dt):
+        base_z, angle, length, phase = item
+        if draw_cilio( base_z, angle, length, phase, t):
             hit_cilio = True
 
     for cell in collect_visible_cells():
@@ -772,43 +1470,82 @@ def draw_fase_1():
             if pontos > best_f1:
                 best_f1 = pontos
 
-    # Vírus
-    P5.push()
-    P5.translate(px_f1, py_f1, cam_z_f1)   # ← vírus também no z absoluto
-    P5.noStroke()
-    P5.fill(180, 30, 60)
-    P5.sphere(SHIP_RADIUS_F1)
-    for i in range(8):
-        a = (i / 8.0) * math.tau
-        P5.push()
-        P5.translate(math.cos(a) * SHIP_RADIUS_F1 * 0.85,
-                     math.sin(a) * SHIP_RADIUS_F1 * 0.85, 0)
-        P5.fill(220, 60, 80)
-        P5.sphere(5)
-        P5.pop()
-    P5.pop()
+    prog_t = min(1.0, pontos / eff_pontos_para_fase2)   
 
+    draw_virus_f1(prog_t, t, px_f1, py_f1, cam_z_f1)
     draw_hud_f1_inline()
 
-    if P5.keyIsDown(13):
-        reset_fase_2()
-        return
-
     if hit_cilio:
+        timer_total = timers["fase1"]   
         state = "over"
-    elif pontos >= PONTOS_PARA_FASE2:
+    elif pontos >= eff_pontos_para_fase2:
         state = "win"
 
+def draw_virus_f1(prog_t, t, px, py, cam_z):
+    vp = virus_params(prog_t)
+
+    virus_r    = vp["virus_r"]
+    n_spikes   = vp["n_spikes"]
+    spike_len  = vp["spike_len"]
+    spike_w    = vp["spike_w"]
+    br, bg, bb = vp["body_rgb"]
+    sr, sg, sb = vp["spike_rgb"]
+
+    P5.push()
+    P5.translate(px, py, cam_z)
+
+    P5.noFill()
+    P5.strokeWeight(spike_w)
+
+    for i in range(n_spikes):
+        a_base = (i / n_spikes) * math.tau + t * 0.12   
+        sway   = math.sin(t * 1.8 + i * 0.9) * 0.18    
+        tip_a  = a_base + sway
+
+        bx = math.cos(a_base) * virus_r * 0.88
+        by = math.sin(a_base) * virus_r * 0.88
+
+        mx = math.cos(a_base + sway * 0.5) * (virus_r + spike_len * 0.6)
+        my = math.sin(a_base + sway * 0.5) * (virus_r + spike_len * 0.6)
+
+        tx = math.cos(tip_a) * (virus_r + spike_len)
+        ty = math.sin(tip_a) * (virus_r + spike_len)
+
+        P5.stroke(br, bg, bb, 210)
+        P5.line(bx, by, 0, mx, my, 0)
+
+        P5.stroke(sr, sg, sb, 220)
+        P5.line(mx, my, 0, tx, ty, 0)
+
+        P5.noStroke()
+        P5.fill(sr, sg, sb, 230)
+        P5.push()
+        P5.translate(tx, ty, 0)
+        P5.sphere(spike_w * 1.15)
+        P5.pop()
+
+    P5.noStroke()
+
+    P5.fill(br, bg, bb)
+    P5.sphere(virus_r)
+
+    spec_alpha = int(_lerp(128, 80, prog_t))   
+    P5.fill(255, 220, 230, spec_alpha)
+    P5.push()
+    P5.translate(-virus_r * 0.32, -virus_r * 0.38, virus_r * 0.2)
+    P5.sphere(virus_r * 0.42)
+    P5.pop()
+
+    P5.pop()   
 
 def draw_tunnel(t):
     SEGS  = 32
-    RINGS = 20
+    RINGS = 24
     STEP  = VIEW_DIST / RINGS
 
     for ri in range(RINGS):
-        # ← z absoluto: parte de cam_z_f1 - 50 em vez de -50
-        z1_local = cam_z_f1 - 50.0 + ri * STEP
-        z2_local = cam_z_f1 - 50.0 + (ri + 1) * STEP
+        z1_local = cam_z_f1 - 200.0 + ri * STEP
+        z2_local = cam_z_f1 - 200.0 + (ri + 1) * STEP
 
         pulse1 = 0.5 + 0.5 * math.sin(z1_local * 0.012 - t * 2.5)
         pulse2 = 0.5 + 0.5 * math.sin(z2_local * 0.012 - t * 2.5)
@@ -833,57 +1570,11 @@ def draw_tunnel(t):
             P5.vertex(x, y, z2_local)
         P5.endShape()
 
-    P5.stroke(40, 180, 120, 100)
-    P5.strokeWeight(0.8)
-    P5.noFill()
-    for li in range(8):
-        a  = (li / 8.0) * math.tau
-        xv = math.cos(a) * TUNNEL_RADIUS
-        yv = math.sin(a) * TUNNEL_RADIUS
-        P5.line(xv, yv, cam_z_f1 - 50.0, xv, yv, cam_z_f1 + VIEW_DIST)
-
-
-# def draw_cilio(base_z, angle, length, phase, t):
-#     z_local  = base_z - cam_z_f1
-#     bx       = math.cos(angle) * TUNNEL_RADIUS
-#     by       = math.sin(angle) * TUNNEL_RADIUS
-#     inx      = -math.cos(angle)
-#     iny      = -math.sin(angle)
-#     sway     = math.sin(t * 1.8 + phase) * 0.35
-#     sway2    = math.cos(t * 1.3 + phase + 1.0) * 0.2
-
-#     p0x, p0y, p0z = bx, by, z_local
-#     p1x = bx + inx * length * 0.33 + sway  * 60
-#     p1y = by + iny * length * 0.33 + sway2 * 40
-#     p1z = z_local + sway * 20
-#     p2x = bx + inx * length * 0.66 + sway  * 100
-#     p2y = by + iny * length * 0.66 + sway2 * 70
-#     p2z = z_local + sway * 35
-#     p3x = bx + inx * length + sway  * 120
-#     p3y = by + iny * length + sway2 * 90
-#     p3z = z_local + sway * 50
-
-#     pulse = 0.6 + 0.4 * math.sin(t * 2.2 + phase)
-#     P5.stroke(int(20+pulse*20), int(20+pulse*20), int(20+pulse*20), 200)
-#     P5.strokeWeight(3.5)
-#     P5.noFill()
-#     P5.beginShape()
-#     P5.vertex(p0x, p0y, p0z) # Nasce aqui
-#     P5.bezierVertex(p1x, p1y, p1z, p2x, p2y, p2z, p3x, p3y, p3z) # Curva
-#     P5.endShape()
-
-#     if abs(p3z) < CILIO_RADIUS_COL + SHIP_RADIUS_F1:
-#         if math.hypot(p3x - px_f1, p3y - py_f1) < CILIO_RADIUS_COL + SHIP_RADIUS_F1:
-#             return True
-#     return False
-
-
 def draw_cell(idx, z, cx, cy, t):
-    # z absoluto — câmera já posicionada em cam_z_f1
     pulse = 0.85 + 0.15 * math.sin(idx * 0.7 + t * 1.2)
     r     = CELL_RADIUS * pulse
     P5.push()
-    P5.translate(cx, cy, z)   # ← era z - cam_z_f1
+    P5.translate(cx, cy, z)   
     P5.noStroke()
     P5.fill(255, 220, 100)
     P5.sphere(r)
@@ -891,63 +1582,36 @@ def draw_cell(idx, z, cx, cy, t):
     P5.sphere(r * 1.35)
     P5.pop()
 
-
-# def draw_hud_f1_inline():
-#     """HUD desenhado direto no canvas WEBGL usando projeção ortográfica."""
-#     P5.noLights()
-#     P5.ortho(-W/2, W/2, -H/2, H/2, -1, 1)
-
-#     # Fundo da caixa de HUD (canto superior esquerdo)
-#     P5.noStroke()
-#     P5.fill(30, 30, 50, 180)
-#     P5.rectMode(P5.CORNER)
-#     P5.rect(-W/2 + 10, -H/2 + 10, 220, 65, 8)
-
-#     # Barra de progresso
-#     bw = 190.0 * (pontos / PONTOS_PARA_FASE2)
-#     P5.fill(60, 200, 100)
-#     P5.rect(-W/2 + 18, -H/2 + 38, bw, 14, 4)
-
-#     # Texto
-#     P5.textSize(14)
-#     P5.fill(80, 220, 120)
-#     P5.textAlign(P5.LEFT, P5.TOP)
-#     P5.text("CELULAS INFECTADAS", -W/2 + 20, -H/2 + 12)
-#     P5.fill(200, 200, 200)
-#     P5.text("%d / %d" % (pontos, PONTOS_PARA_FASE2), -W/2 + 20, -H/2 + 54)
-
-#     P5.fill(120, 180, 255, 200)
-#     P5.textSize(13)
-#     P5.textAlign(P5.CENTER, P5.BOTTOM)
-#     P5.text("WASD / setas: mover  |  desvie dos cilios!", 0, H/2 - 6)
-
-#     P5.textAlign(P5.LEFT, P5.BASELINE)
-
-#     # Restaura perspectiva para o próximo frame
-#     P5.perspective(P5.PI / 3.0, float(W) / float(H), 1.0, 5000.0)
-
 def draw_hud_f1_inline():
-    # Limpa o buffer 2D
     hud.clear()
 
-    # Fundo da caixa de HUD (canto superior esquerdo) — cor semi-transparente
     hud.noStroke()
     hud.fill(150, 100, 100, 180)
     hud.rectMode(P5.CORNER)
     hud.rect(10, 10, 220, 65, 8)
 
-    # Barra de progresso (amarelo claro)
-    bw = 190.0 * (pontos / PONTOS_PARA_FASE2)
+    bw = 190.0 * (pontos / eff_pontos_para_fase2)
     hud.fill(255, 220, 100)
     hud.rect(18, 38, bw, 14, 4)
 
-    # Texto
     hud.textSize(14)
     hud.fill(255, 240, 150)
     hud.textAlign(P5.LEFT, P5.TOP)
     hud.text("CELULAS INFECTADAS", 20, 12)
     hud.fill(255, 240, 180)
-    hud.text("%d / %d" % (pontos, PONTOS_PARA_FASE2), 20, 54)
+    hud.text("%d / %d" % (pontos, eff_pontos_para_fase2), 20, 54)
+
+    hud.textAlign(P5.RIGHT, P5.TOP)
+    
+    hud.fill(150, 100, 100, 180)
+    hud.rect(W - 170, 10, 160, 65, 8)
+
+    hud.fill(200, 240, 200)
+    hud.textSize(14)
+    tempo_str = _fmt_time(timers["fase1"] + timers["fase2"])
+    pontos_totais = pontos * 100 + int(score)
+    hud.text("TEMPO TOTAL: %s" % tempo_str, W - 20, 20)
+    hud.text("PONTUACAO: %d" % pontos_totais, W - 20, 44)
 
     hud.fill(200, 100, 120, 200)
     hud.textSize(13)
@@ -956,21 +1620,20 @@ def draw_hud_f1_inline():
 
     hud.textAlign(P5.LEFT, P5.BASELINE)
 
-    # Carimba na tela sem afetar o 3D
     P5.resetShader()
+    P5.camera()
+    P5.perspective()
+    P5.fill(255, 255, 255, 255)
     P5.image(hud, -W / 2, -H / 2, W, H)
 
-    # ← NOVO: restaura perspectiva 3D para o próximo frame
-    P5.perspective(P5.PI / 3.0, float(W) / float(H), 1.0, 5000.0)
-
-# ---------------------------------------------------------------------------
-#  Fase 2 — Tubo Sanguíneo (shader raymarching)
-# ---------------------------------------------------------------------------
+    P5.perspective(P5.PI / 3.6, float(W) / float(H), 1.0, 5000.0)
 
 def draw_fase_2():
     global cam_z_f2, px_f2, py_f2, speed, score, best_f2, hit_flash, state
+    global heart_hz_f2, pulse_phase_f2, timer_total
 
     dt = min(0.05, P5.deltaTime / 1000.0)
+    update_timer("fase2", dt)   
 
     mv = 14.0 * dt
     if P5.keyIsDown(P5.LEFT_ARROW)  or P5.keyIsDown(65): px_f2 -= mv
@@ -979,24 +1642,68 @@ def draw_fase_2():
     if P5.keyIsDown(P5.DOWN_ARROW)  or P5.keyIsDown(83): py_f2 -= mv
 
     lim   = TUNNEL_HALF - SHIP_RADIUS_F2
-    px_f2 = max(-lim, min(lim, px_f2))
-    py_f2 = max(-lim, min(lim, py_f2))
+    pdist = math.hypot(px_f2, py_f2)
+    if pdist > lim and pdist > 0:
+        px_f2 = px_f2 / pdist * lim
+        py_f2 = py_f2 / pdist * lim
 
-    speed     = min(60.0, 18.0 + cam_z_f2 * 0.02)
+    speed     = min(60.0, eff_speed_ini_f2 + cam_z_f2 * 0.02)   
     cam_z_f2 += speed * dt
     score     = cam_z_f2
     if score > best_f2:
         best_f2 = score
 
-    base = int((cam_z_f2 - OB_START) // SPACING)
-    for n in range(base - 1, base + MAX_OBS + 1):
+    # ======== NOVA LÓGICA DE VITÓRIA ========
+    if cam_z_f2 >= META_F2:
+        timer_total = timers["fase1"] + timers["fase2"]
+        state = "win_f2"
+        return
+    # ========================================
+
+    speed_t = (speed - 18.0) / (60.0 - 18.0)
+    speed_t = max(0.0, min(1.0, speed_t))
+    target_hz = _lerp(1.10, 2.00, speed_t)
+    heart_hz_f2 = _lerp(heart_hz_f2, target_hz, min(1.0, dt * 2.3))
+    pulse_phase_f2 = (pulse_phase_f2 + heart_hz_f2 * dt * math.tau) % math.tau
+
+    virus_z = cam_z_f2 + 8.0
+    base = int((virus_z - OB_START) // SPACING)
+    for n in range(base - 2, base + MAX_OBS + 2):
         if n < 0: continue
-        z, cx, cy, rad, _ = make_obstacle(n)
-        relz = z - cam_z_f2
-        if -rad < relz < rad:
-            if math.hypot(cx - px_f2, cy - py_f2) < rad * 0.85 + SHIP_RADIUS_F2:
-                state     = "over"
-                hit_flash = 1.0
+        
+        z, rad, tipo, comp, ang_base, dist, freq, fase = make_obstacle(n)
+        
+        if z > META_F2 - 20.0:
+            continue
+
+        dz = z - virus_z
+        
+        if abs(dz) < rad * 0.45:
+            if comp == 0:
+                anim = math.sin(cam_z_f2 * freq + fase) * 0.5
+                cx = math.cos(ang_base) * dist + anim
+                cy = math.sin(ang_base) * dist + anim
+            elif comp == 1:
+                dir_giro = 1.0 if n % 2 == 0 else -1.0
+                angulo_atual = ang_base + (cam_z_f2 * freq * dir_giro)
+                cx = math.cos(angulo_atual) * dist
+                cy = math.sin(angulo_atual) * dist
+            else:
+                oscilacao = math.sin(cam_z_f2 * freq + fase)
+                cx = math.cos(ang_base) * (dist * oscilacao)
+                cy = math.sin(ang_base) * (dist * oscilacao)
+
+            # =======================================================
+            # HITBOXES HONESTAS:
+            # tipo >= 3.14 (Glóbulo Branco): Esfera cheia, hitbox de 85% do raio visual
+            # tipo < 3.14 (Hemácia): Disco achatado, hitbox de 70% do raio visual
+            # =======================================================
+            hitbox_rad = rad * 0.85 if tipo >= 3.14 else rad * 0.70
+
+            if math.hypot(cx - px_f2, cy - py_f2) < hitbox_rad + SHIP_RADIUS_F2:
+                timer_total = timers["fase1"] + timers["fase2"]  
+                state       = "over"
+                hit_flash   = 1.0
                 break
 
     if hit_flash > 0.0:
@@ -1007,29 +1714,138 @@ def draw_fase_2():
     prog.setUniform("uResolution", _to_js([float(W), float(H)]))
     prog.setUniform("uTime",       float(P5.millis()) / 1000.0)
     prog.setUniform("uCamZ",       float(cam_z_f2 % RIDGE_MOD))
+    prog.setUniform("uAbsZ",       float(cam_z_f2))               # Passando o Z absoluto real para os cálculos finais
     prog.setUniform("uPlayer",     _to_js([float(px_f2), float(py_f2)]))
     prog.setUniform("uObCount",    int(count))
     prog.setUniform("uObRel",      _to_js([float(v) for v in rel]))
     prog.setUniform("uObRad",      _to_js([float(v) for v in rads]))
     prog.setUniform("uObType",     _to_js([float(v) for v in types]))
     prog.setUniform("uHit",        float(hit_flash))
+    prog.setUniform("uLodEnable",  1.0 if lod_enabled else 0.0)
+    prog.setUniform("uLodStrength", float(lod_strength))
+    prog.setUniform("uHeartHz",    float(heart_hz_f2))
+    prog.setUniform("uPulsePhase", float(pulse_phase_f2))
+    prog.setUniform("uMetaZ",      float(META_F2))
+    set_virus_uniforms(prog, 1.0)
+    P5.noStroke()              
     P5.rect(0, 0, W, H)
 
-    # HUD fase 2 via buffer 2D (necessário porque o shader ocupa tudo)
     draw_hud_f2()
 
-
 def draw_hud_f2():
+    global pontos, score, timers, best_f2, speed, heart_hz_f2, lod_enabled, lod_strength
+
     hud.clear()
-    
-    # Cores temáticas (nariz/pele)
-    hud.fill(255, 200, 100)
-    hud.textSize(18)
-    
-    # Lembre-se que agora usamos best_f2 em vez de best
-    hud.text("DISTANCIA: %d m" % int(score), 16, 28)
-    hud.text("RECORDE:   %d m" % int(best_f2), 16, 50) 
-    hud.text("VEL: %d" % int(speed), W - 110, 28)
-    
+    hud.textAlign(P5.LEFT, P5.TOP)
+    hud.noStroke()
+
+    try:
+        hud.fill(20, 8, 10, 170)
+        hud.rect(10, 12, 200, 72, 8)       
+        hud.rect(W - 152, 12, 142, 98, 8)  
+
+        hud.fill(255, 210, 120)
+        hud.textSize(16)
+        pontos_totais = int(pontos * 100 + score)
+        hud.text("PONTUACAO: %d" % pontos_totais, 18, 18)
+        hud.text("DISTANCIA: %d m" % int(score), 18, 40)
+        hud.text("RECORDE:   %d m" % int(best_f2), 18, 62)
+        
+        hud.text("VEL: %d" % int(speed), W - 144, 18)
+        hud.text("BPM: %d" % int(heart_hz_f2 * 60.0), W - 144, 40)
+        hud.text("TEMPO F2: %s" % _fmt_time(timers["fase2"]), W - 144, 62)
+        
+        hud.fill(200, 240, 200)
+        tempo_str = _fmt_time(timers["fase1"] + timers["fase2"])
+        hud.text("T. TOTAL: %s" % tempo_str, W - 144, 84)
+
+        if lod_enabled:
+            hud.fill(180, 220, 180)
+            hud.textSize(14)
+            hud.text("LOD: ON  %d%%" % int(lod_strength * 100), 16, H - 42)
+            hud.fill(200, 180, 140)
+            hud.textSize(12)
+            hud.text("L = desligar  |  [ ] = intensidade", 16, H - 24)
+        else:
+            hud.fill(220, 180, 180)
+            hud.textSize(14)
+            hud.text("LOD: OFF (max)", 16, H - 32)
+            hud.fill(200, 180, 140)
+            hud.textSize(12)
+            hud.text("L = ligar LOD", 16, H - 14)
+            
+    except Exception as e:
+        hud.fill(255, 0, 0, 255)
+        hud.textSize(20)
+        hud.text("ERRO HUD: " + str(e), 20, 20)
+
+    hud.textAlign(P5.LEFT, P5.BASELINE)
+
     P5.resetShader()
-    P5.image(hud, -W / 2, -H / 2, W, H)
+    P5.camera()
+    P5.perspective()
+
+    try:
+        gl = P5.drawingContext
+        gl.clear(256)      
+        gl.disable(2929)   
+    except:
+        pass
+
+    P5.noStroke()
+    P5.fill(255, 255, 255, 255)
+    P5.texture(hud)
+    P5.rect(-W / 2, -H / 2, W, H)
+
+    try:
+        gl = P5.drawingContext
+        gl.enable(2929)
+    except:
+        pass
+
+    P5.perspective(P5.PI / 3.6, float(W) / float(H), 1.0, 5000.0)
+
+def _lerp(a, b, x):
+    return a + (b - a) * x
+ 
+def set_virus_uniforms(shader, prog_t):
+    vp = virus_params(prog_t)
+    sc = VIRUS_SCALE_F2
+    br, bg, bb = vp["body_rgb"]
+    sr, sg, sb = vp["spike_rgb"]
+    shader.setUniform("uVirusR",        float(vp["virus_r"]   / sc))
+    shader.setUniform("uVirusNSpikes",  float(vp["n_spikes"]))
+    shader.setUniform("uVirusSpikeLen", float(vp["spike_len"] / sc))
+    shader.setUniform("uVirusSpikeW",   float(vp["spike_w"]   / sc))
+    shader.setUniform("uVirusBodyCol",  _to_js([br/255.0, bg/255.0, bb/255.0]))
+    shader.setUniform("uVirusSpikeCol", _to_js([sr/255.0, sg/255.0, sb/255.0]))
+    
+    # Buffer para armazenar as últimas teclas digitadas
+cheat_buffer = ""
+
+def keyTyped():
+    """Função nativa do p5.js que detecta teclas imprimíveis digitadas"""
+    global cheat_buffer, state, timer_total
+    
+    # Só queremos ouvir o cheat code se o jogador estiver em uma fase ativa
+    if state in ("fase1", "fase2"):
+        # Adiciona a tecla digitada (em minúsculo) ao buffer
+        cheat_buffer += str(P5.key).lower()
+        
+        # Mantém apenas as últimas 10 letras no buffer
+        if len(cheat_buffer) > 10:
+            cheat_buffer = cheat_buffer[-10:]
+            
+        # Verifica se o código secreto "vasco" foi digitado
+        if "vasco" in cheat_buffer:
+            if state == "fase1":
+                # Se estiver na Fase 1, pula para a Fase 2
+                reset_fase_2()
+            
+            elif state == "fase2":
+                # Se estiver na Fase 2, força a vitória
+                timer_total = timers["fase1"] + timers["fase2"]
+                state = "win_f2"
+                
+            # Limpa o buffer após o código funcionar
+            cheat_buffer = ""
