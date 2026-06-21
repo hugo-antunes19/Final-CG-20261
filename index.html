@@ -1,0 +1,1164 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Retrovírus - Final CG</title>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=Outfit:wght@700;900&display=swap" rel="stylesheet">
+    
+    <link rel="stylesheet" href="https://pyscript.net/releases/2024.1.1/core.css">
+    <script type="module" src="https://pyscript.net/releases/2024.1.1/core.js"></script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/p5@1.11.11/lib/p5.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #0d0408;
+            --accent-red: #ff3c3c;
+            --accent-dark: #2a0a14;
+            --text-main: #f0e6e6;
+            --text-muted: #a69393;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            background-image: 
+                radial-gradient(circle at 15% 50%, rgba(42, 10, 20, 0.4) 0%, transparent 50%),
+                radial-gradient(circle at 85% 30%, rgba(60, 15, 20, 0.3) 0%, transparent 50%);
+            background-attachment: fixed;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        /* Removendo loader padrão do pyscript (opcional, mas limpa a tela inicial) */
+        .py-overlay { display: none !important; }
+
+        header {
+            text-align: center;
+            padding: 40px 20px 20px;
+        }
+
+        h1 {
+            font-family: 'Outfit', sans-serif;
+            font-size: 3.5rem;
+            font-weight: 900;
+            margin: 0;
+            background: linear-gradient(135deg, #ff8a8a, #ff3c3c);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            filter: drop-shadow(0 0 15px rgba(255, 60, 60, 0.3));
+        }
+
+        .subtitle {
+            color: var(--text-muted);
+            font-size: 1.1rem;
+            margin-top: 10px;
+            font-weight: 500;
+            letter-spacing: 1px;
+        }
+
+        #game-wrapper {
+            margin: 30px auto;
+            padding: 10px;
+            background: rgba(20, 5, 10, 0.6);
+            border-radius: 12px;
+            border: 1px solid rgba(255, 60, 60, 0.2);
+            box-shadow: 0 0 40px rgba(255, 60, 60, 0.1);
+            backdrop-filter: blur(10px);
+            display: inline-block;
+        }
+
+        #game-container {
+            display: block;
+            border-radius: 8px;
+            overflow: hidden;
+            width: 900px;
+            height: 600px;
+            background: #000;
+        }
+
+        .content-section {
+            max-width: 900px;
+            width: 100%;
+            margin: 20px auto 60px;
+            padding: 0 20px;
+            box-sizing: border-box;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 40px;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px;
+            padding: 30px;
+            backdrop-filter: blur(5px);
+            transition: transform 0.3s ease, border-color 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            border-color: rgba(255, 60, 60, 0.3);
+        }
+
+        .card h2 {
+            font-family: 'Outfit', sans-serif;
+            color: #fff;
+            margin-top: 0;
+            font-size: 1.8rem;
+            border-bottom: 2px solid var(--accent-dark);
+            padding-bottom: 15px;
+            margin-bottom: 20px;
+        }
+
+        .card p, .card ul {
+            font-size: 1.05rem;
+            line-height: 1.6;
+            color: #dcdcdc;
+        }
+
+        .card ul {
+            padding-left: 20px;
+        }
+
+        .card li {
+            margin-bottom: 10px;
+        }
+
+        .key {
+            display: inline-block;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 0.9rem;
+            color: #fff;
+            margin: 0 4px;
+        }
+
+        @media (max-width: 950px) {
+            .content-section {
+                grid-template-columns: 1fr;
+            }
+            #game-wrapper {
+                max-width: 100%;
+                overflow-x: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>Retrovírus</h1>
+        <div class="subtitle">Trabalho de Computação Gráfica — 2026.1</div>
+    </header>
+
+    <div id="game-wrapper">
+        <div id="game-container"></div>
+    </div>
+
+    <main class="content-section">
+        <div class="card">
+            <h2>🦠 Sobre o Jogo</h2>
+            <p>Em <strong>Retrovírus</strong>, você controla um patógeno microscópico letal com a missão de colonizar o hospedeiro.</p>
+            <p>A infecção ocorre em estágios:</p>
+            <ul>
+                <li><strong>Fase 1 (Túnel Epitelial):</strong> Invada a cavidade nasal, desvie dos cílios de defesa do organismo e infecte células saudáveis.</li>
+                <li><strong>Fase 2 (Corrente Sanguínea):</strong> Sobreviva a uma corrida frenética dentro dos vasos sanguíneos, desviando de hemácias e glóbulos brancos.</li>
+            </ul>
+        </div>
+
+        <div class="card">
+            <h2>🎮 Controles</h2>
+            <p>Use o teclado para dominar o hospedeiro:</p>
+            <ul>
+                <li><span class="key">W</span> <span class="key">A</span> <span class="key">S</span> <span class="key">D</span> ou <span class="key">Setas</span> : Movimentação</li>
+                <li><span class="key">ESPAÇO</span> : Subir (Fase 1) / Confirmar menus</li>
+                <li><span class="key">ENTER</span> : Confirmar / Avançar</li>
+                <li><span class="key">ESC</span> : Pausar o jogo</li>
+            </ul>
+            <p style="margin-top: 20px; font-size: 0.9rem; color: var(--accent-red);">
+                <em>Dica: Fique atento ao balanço dos cílios e antecipe seus movimentos!</em>
+            </p>
+        </div>
+    </main>
+    <script>
+        // Capture the original console.error before any overrides, so we can
+        // call it directly without triggering the intercept (prevents infinite loops).
+        const _origConsoleError = console.error.bind(console);
+
+        // Display an error banner on-screen (standalone mode).
+        function _showError(message) {
+            let errDiv = document.getElementById('py5-error');
+            if (!errDiv) {
+                errDiv = document.createElement('div');
+                errDiv.id = 'py5-error';
+                errDiv.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#c00;color:#fff;padding:8px 12px;font:13px/1.5 monospace;white-space:pre-wrap;z-index:9999;';
+                document.body.appendChild(errDiv);
+            }
+            errDiv.textContent += message + '\n';
+        }
+
+        // ---- Print console overlay ----
+        // Hidden by default. A toggle button at the bottom-right corner shows/hides it.
+        // Receives raw chunks from StdoutCatcher — print("hi") sends "hi" then "\n".
+        let _printOutput = null, _printPanel = null, _printBtn = null, _unreadLines = 0;
+
+        function _ensurePrintUI() {
+            if (_printPanel) return;
+
+            // Panel
+            _printPanel = document.createElement('div');
+            _printPanel.id = 'py5-print';
+            _printPanel.style.cssText =
+                'display:none;position:fixed;bottom:0;left:0;right:0;height:140px;' +
+                'background:rgba(0,0,0,0.78);color:#e8e8e8;font:12px/1.5 monospace;' +
+                'white-space:pre-wrap;z-index:9998;box-sizing:border-box;';
+
+            // Drag-to-resize handle at the top edge
+            const handle = document.createElement('div');
+            handle.style.cssText =
+                'position:absolute;top:0;left:0;right:0;height:6px;' +
+                'cursor:ns-resize;background:rgba(255,255,255,0.13);';
+            _printPanel.appendChild(handle);
+
+            // Scrollable output area
+            _printOutput = document.createElement('div');
+            _printOutput.style.cssText =
+                'position:absolute;top:6px;bottom:0;left:0;right:0;' +
+                'overflow-y:auto;padding:4px 10px;box-sizing:border-box;';
+            _printPanel.appendChild(_printOutput);
+
+            document.body.appendChild(_printPanel);
+
+            // Toggle button
+            _printBtn = document.createElement('button');
+            _printBtn.style.cssText =
+                'position:fixed;bottom:8px;right:8px;z-index:9999;' +
+                'background:rgba(0,0,0,0.55);color:#ddd;border:none;' +
+                'padding:4px 10px;font:12px monospace;cursor:pointer;' +
+                'border-radius:4px;user-select:none;';
+            _printBtn.textContent = '▲ console';
+            document.body.appendChild(_printBtn);
+
+            _printBtn.addEventListener('click', () => {
+                const opening = _printPanel.style.display === 'none';
+                _printPanel.style.display = opening ? 'block' : 'none';
+                _unreadLines = 0;
+                _refreshBtn();
+            });
+
+            // Resize: drag upward to grow, downward to shrink
+            let dragY0, dragH0;
+            handle.addEventListener('mousedown', e => {
+                dragY0 = e.clientY;
+                dragH0 = _printPanel.offsetHeight;
+                e.preventDefault();
+                const onMove = e2 => {
+                    _printPanel.style.height =
+                        Math.max(48, dragH0 - (e2.clientY - dragY0)) + 'px';
+                };
+                const onUp = () => {
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                };
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+            });
+        }
+
+        function _refreshBtn() {
+            if (!_printBtn) return;
+            const open = _printPanel && _printPanel.style.display !== 'none';
+            _printBtn.textContent = open ? '▼ console'
+                : (_unreadLines ? `▲ console (${_unreadLines})` : '▲ console');
+        }
+
+        function _showPrint(text) {
+            _ensurePrintUI();
+            _printOutput.textContent += text;
+            _printOutput.scrollTop = _printOutput.scrollHeight;
+            if (_printPanel.style.display === 'none') {
+                _unreadLines += (text.match(/\n/g) || []).length;
+                _refreshBtn();
+            }
+        }
+
+        // Catch global JS errors (including PythonError from Pyodide)
+        window.addEventListener('error', function(event) {
+            let message = "";
+            if (event.error && event.error.message) {
+                 message = event.error.message;
+            } else {
+                 message = event.message || String(event);
+            }
+
+            // Ignore duplicate SyntaxErrors (handled by Python logic)
+            if (message && message.includes('SyntaxError:')) return;
+
+            const msg = { type: 'error', message: message };
+            window.parent.postMessage(msg, '*');
+        });
+
+        // Catch unhandled promise rejections (often used by async Pyodide)
+        window.addEventListener('unhandledrejection', function(event) {
+            const message = (event.reason ? event.reason.message || event.reason : "Unknown");
+            if (message && message.toString().includes('SyntaxError:')) return;
+
+            const msg = { type: 'error', message: "Unhandled Rejection: " + message };
+            window.parent.postMessage(msg, '*');
+        });
+
+        // Loopback message listener for standalone mode.
+        // Uses _origConsoleError and _showError — never calls the overridden console.error
+        // to avoid an infinite loop (overridden console.error → postMessage → this listener → ...).
+        window.addEventListener('message', (event) => {
+            if (window.parent === window) {
+                const data = event.data;
+                if (data && data.type === 'print') {
+                    console.log(data.message);
+                    _showPrint(data.message);
+                } else if (data && data.type === 'error') {
+                    const msg = data.filename
+                        ? `${data.filename}:${data.line} - ${data.message}`
+                        : data.message;
+                    _showError(msg);
+                    _origConsoleError(msg);
+                }
+            }
+        });
+
+        // Intercept console.error to catch p5.js internal errors (e.g. shader compilation).
+        // In iframe (IDE) mode: forward to parent. In standalone mode: show on screen.
+        // Either way, never re-posts via window.parent when parent === window to avoid loops.
+        (function() {
+            console.error = function(...args) {
+                _origConsoleError.apply(console, args);
+
+                const message = args.map(arg => String(arg)).join(' ');
+
+                if (window.parent !== window) {
+                    // IDE iframe mode: forward error to the IDE shell
+                    window.parent.postMessage({ type: 'error', message: message }, '*');
+                } else {
+                    // Standalone mode: display on screen
+                    _showError(message);
+                }
+
+                if (window.currentP5) {
+                    try { window.currentP5.noLoop(); } catch(e){}
+                }
+            };
+        })();
+    </script>
+    <script type="py">
+        import js
+        import ast
+        import textwrap
+        import sys
+        import json
+        import base64
+        import asyncio
+        from pyodide.ffi import create_proxy, to_js
+
+        # Global P5 instance
+        P5 = None
+        # Expose global p5 class
+        p5 = js.p5
+
+        class StdoutCatcher:
+            def write(self, text):
+                msg = {"type": "print", "message": text}
+                js.window.parent.postMessage(to_js(msg, dict_converter=js.Object.fromEntries), "*")
+            def flush(self):
+                pass
+        
+        class StderrCatcher:
+            def write(self, text):
+                # Avoid Duplicate SyntaxError messages (handled explicitly by sketch logic)
+                if text.strip().startswith('SyntaxError:'):
+                    return
+                msg = {"type": "error", "message": text}
+                js.window.parent.postMessage(to_js(msg, dict_converter=js.Object.fromEntries), "*")
+            def flush(self):
+                pass
+
+        # Install Catchers globally immediately
+        sys.stdout = StdoutCatcher()
+        sys.stderr = StderrCatcher()
+
+        def camel_to_snake(name):
+            if name.isupper(): return name
+            import re
+            s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
+            return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
+
+        class P5Transformer(ast.NodeTransformer):
+            custom_aliases = {}
+            
+            def __init__(self, user_defined, case_mode='both'):
+                # Use prototype to get properties since instance isn't created yet
+                self.p5_props = set(dir(js.p5.prototype))
+                # Add common instance properties that aren't on the prototype
+                self.p5_props.update([
+                    'width', 'height', 'frameCount', 'mouseX', 'mouseY', 'pmouseX', 'pmouseY',
+                    'mouseIsPressed', 'mouseButton', 'keyIsPressed', 'key', 'keyCode',
+                    'pixels', 'touches', 'deltaTime', 'focused'
+                ])
+                self.user_defined = user_defined
+                self.case_mode = case_mode
+                self.scope_stack = []
+
+                # Explicitly exclude 'print' and other builtins/globals
+                # 'label' is often leaked from p5.prototype (as part of internal DOM attributes?) causing confusion.
+                exclusions = {
+                    'print', 'open', 'exit', 'quit', 'help', 'asset', 'label',
+                    'map', 'set', 'filter', 'min', 'max', 'abs', 'round', 'pow', 'sum',
+                    'random', 'shuffle', 'sort', 'reverse', 'append', 'splice', 'subset', 
+                    'join', 'split', 'shorten', 'concat'
+                }
+                self.p5_props -= exclusions
+                
+                self.p5_props.add('drawingContext')
+                
+                # Build Mapping: snake_case -> camelCase
+                # Only needed if case_mode is 'snake' or 'both'
+                self.snake_map = {}
+                if self.case_mode in ['snake', 'both']:
+                    for prop in self.p5_props:
+                        snake = camel_to_snake(prop)
+                        # Ensure we don't map back to an excluded builtin (e.g. OPEN -> open)
+                        if snake != prop and snake not in exclusions:
+                            self.snake_map[snake] = prop
+
+            def resolve_p5_name(self, name):
+                # 0. Check Scope Stack (Local shadowing)
+                for scope in self.scope_stack:
+                    if name in scope:
+                        return None
+                        
+                # 0.1 Check custom aliases (e.g. set by hacks.py)
+                if name in self.custom_aliases:
+                    return self.custom_aliases[name]
+                        
+                # 0.5. Check if already defined in globals (e.g. from hacks.py)
+                if name in globals():
+                    return None
+
+                # 1. Check exact match (CamelCase)
+                if name in self.p5_props:
+                    if self.case_mode in ['camel', 'both']:
+                        return name
+                    if self.case_mode == 'snake':
+                        return None 
+
+                # 2. Check snake_case match
+                if name in self.snake_map:
+                    if self.case_mode in ['snake', 'both']:
+                        return self.snake_map[name]
+                
+                return None
+            
+            def analyze_scope(self, node):
+                """Collect local variables from a function body (args + assignments), recursively."""
+                local_vars = set()
+                
+                # 1. Arguments are always local
+                for arg in node.args.args:
+                    local_vars.add(arg.arg)
+                
+                # 2. Recursive traversal for assignments
+                # We do NOT use generic_visit/NodeVisitor because we need manual control 
+                # to STOP at nested scopes (FunctionDef, ClassDef, Lambda).
+                
+                def visit_node_scope(n):
+                    if isinstance(n, ast.Assign):
+                        for target in n.targets:
+                            add_target(target)
+                    elif isinstance(n, ast.AnnAssign):
+                         add_target(n.target)
+                    elif isinstance(n, ast.For) or isinstance(n, ast.AsyncFor):
+                        add_target(n.target)
+                        for item in n.body: visit_node_scope(item)
+                        for item in n.orelse: visit_node_scope(item)
+                    elif isinstance(n, ast.With) or isinstance(n, ast.AsyncWith):
+                        for item in n.items:
+                            if item.optional_vars:
+                                add_target(item.optional_vars)
+                        for item in n.body: visit_node_scope(item)
+                    elif isinstance(n, ast.NamedExpr): # walrus operator (a := 1)
+                        add_target(n.target)
+                    
+                    # Control Flow - Recurse but don't add vars directly
+                    elif isinstance(n, (ast.If, ast.While, ast.Try)):
+                        for field, value in ast.iter_fields(n):
+                            if isinstance(value, list):
+                                for item in value:
+                                    if isinstance(item, ast.AST):
+                                        visit_node_scope(item)
+                            elif isinstance(value, ast.AST):
+                                visit_node_scope(value)
+                    
+                    # Scopes - STOP recursion into body, but the name itself is local to this scope.
+                    elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                        local_vars.add(n.name)
+                        return
+                    elif isinstance(n, ast.Lambda):
+                        return
+
+                    # Statements - Recurse into lists of statements (like module body or if body)
+                    elif hasattr(n, 'body') and isinstance(n.body, list):
+                         for item in n.body:
+                             visit_node_scope(item)
+
+                def add_target(target):
+                    if isinstance(target, ast.Name):
+                        local_vars.add(target.id)
+                    elif isinstance(target, (ast.Tuple, ast.List)):
+                        for elt in target.elts:
+                            add_target(elt)
+                
+                # Start traversal from function body
+                for item in node.body:
+                    visit_node_scope(item)
+                    
+                return local_vars
+
+            def visit_FunctionDef(self, node):
+                # Push new scope
+                local_names = self.analyze_scope(node)
+                self.scope_stack.append(local_names)
+                
+                # Visit children (body)
+                self.generic_visit(node)
+                
+                # Pop scope
+                self.scope_stack.pop()
+                return node
+
+            def visit_Call(self, node):
+                # We do generic_visit first to process arguments
+                self.generic_visit(node)
+                
+                if isinstance(node.func, ast.Name):
+                    name = node.func.id
+                    if name == 'print': return node
+                    
+                    if name not in self.user_defined:
+                        target = self.resolve_p5_name(name)
+                        if target:
+                            node.func = ast.Attribute(
+                                value=ast.Name(id='P5', ctx=ast.Load()),
+                                attr=target,
+                                ctx=ast.Load()
+                            )
+                return node
+
+            def visit_Name(self, node):
+                if isinstance(node.ctx, ast.Load):
+                    if node.id not in self.user_defined:
+                         target = self.resolve_p5_name(node.id)
+                         if target:
+                            return ast.Attribute(
+                                value=ast.Name(id='P5', ctx=ast.Load()),
+                                attr=target,
+                                ctx=ast.Load()
+                            )
+                return node
+
+        async def entry_point():
+            # Standard file IO is sufficient in Pyodide
+            import os
+            import importlib.abc
+            import importlib.util
+            
+            # Ensure stdout is still set
+            sys.stdout = StdoutCatcher()
+            
+            # Parse URL params
+            params = js.URLSearchParams.new(js.window.location.search)
+            project_id = params.get('id')
+            case_mode = params.get('case') or 'both'
+            raw_window_name = js.window.name or ""
+            folder = params.get('folder') or ''
+            base_path = folder.rstrip('/') + '/' if folder else ''
+
+            # Will be set to True if no project is loaded from localStorage or via IDE
+            is_standalone = False
+            if not project_id and not raw_window_name.strip():
+                is_standalone = True
+
+            # --- Custom Import Hook for Auto-Prefixing in Modules ---
+            class P5Importer(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+                def __init__(self, mode):
+                    self.mode = mode
+
+                def find_spec(self, fullname, path, target=None):
+                    filename = fullname + ".py"
+                    if os.path.exists(filename):
+                        return importlib.util.spec_from_file_location(fullname, filename, loader=self)
+
+                    if is_standalone:
+                        try:
+                            # Standalone mode: fetch from server (respecting folder prefix)
+                            req = js.XMLHttpRequest.new()
+                            req.open('GET', base_path + filename, False)
+                            req.send(None)
+                            if req.status == 200:
+                                with open(filename, 'w') as f:
+                                    f.write(req.responseText)
+                                return importlib.util.spec_from_file_location(fullname, filename, loader=self)
+                        except Exception:
+                            pass
+
+                    return None
+
+                def create_module(self, spec):
+                    return None 
+
+                def exec_module(self, module):
+                    with open(module.__file__, 'r') as f:
+                        source = f.read()
+                    
+                    try:
+                        tree = ast.parse(source)
+                    except Exception as e:
+                        # Report SyntaxError in module
+                        err_msg = f"{e.__class__.__name__}: {e}"
+                        if isinstance(e, SyntaxError):
+                            err_msg = f"{e.__class__.__name__}: {e.msg}"
+                        
+                        line_num = getattr(e, 'lineno', 0)
+                        msg = {"type": "error", "message": err_msg, "filename": module.__file__, "line": line_num}
+                        js.window.parent.postMessage(to_js(msg, dict_converter=js.Object.fromEntries), "*")
+                        raise e
+
+                    user_defined = set()
+                    for node in tree.body:
+                        if isinstance(node, ast.FunctionDef):
+                            user_defined.add(node.name)
+                        elif isinstance(node, ast.Assign):
+                            for target in node.targets:
+                                if isinstance(target, ast.Name):
+                                    user_defined.add(target.id)
+                                elif isinstance(target, ast.Tuple) or isinstance(target, ast.List):
+                                    for elt in target.elts:
+                                        if isinstance(elt, ast.Name):
+                                            user_defined.add(elt.id)
+                    
+                    try:
+                        transformer = P5Transformer(user_defined, self.mode)
+                        new_tree = transformer.visit(tree)
+                        ast.fix_missing_locations(new_tree)
+                        
+                        code_obj = compile(new_tree, filename=module.__file__, mode="exec")
+                        exec(code_obj, module.__dict__)
+                    except Exception as e:
+                         # Runtime error in module execution
+                        import traceback
+                        # We just propagate it, but the main loop's handler might catch "ImportError",
+                        # so we want to be sure to report the inner detail if possible.
+                        # Actually, posting here is safe.
+                        tb_list = traceback.extract_tb(e.__traceback__)
+                        line_num = 0
+                        err_filename = module.__file__
+                        if tb_list:
+                             last_frame = tb_list[-1]
+                             line_num = last_frame.lineno
+                             err_filename = last_frame.filename
+                        
+                        err_msg = f"{e.__class__.__name__}: {e}"
+                        msg = {"type": "error", "message": err_msg, "filename": err_filename, "line": line_num}
+                        js.window.parent.postMessage(to_js(msg, dict_converter=js.Object.fromEntries), "*")
+                        raise e
+
+            # Register Hook
+            sys.meta_path.insert(0, P5Importer(case_mode))
+
+            # --- Unified Project Hydration ---
+            # Parse Project ID from runner URL
+            params = js.URLSearchParams.new(js.window.location.search)
+            project_id = params.get('id')
+            
+            hydrated_assets = {}
+            if not is_standalone:
+                try:
+                    project_files_data = None
+
+                    if project_id:
+                        # --- Try IndexedDB first (new storage backend) ---
+                        try:
+                            idb_read = js.eval("""(function(pid) {
+                                return new Promise(function(resolve) {
+                                    var req = indexedDB.open('py5script_db', 1);
+                                    req.onsuccess = function(e) {
+                                        var db = e.target.result;
+                                        if (!db.objectStoreNames.contains('files')) { resolve(null); return; }
+                                        var tx = db.transaction(['files'], 'readonly');
+                                        var gr = tx.objectStore('files').get(pid);
+                                        gr.onsuccess = function() { resolve(gr.result ? gr.result.files : null); };
+                                        gr.onerror   = function() { resolve(null); };
+                                    };
+                                    req.onerror = function() { resolve(null); };
+                                });
+                            })""")
+                            idb_files_js = await idb_read(project_id)
+                            if idb_files_js:
+                                project_files_data = json.loads(js.JSON.stringify(idb_files_js))
+                        except Exception:
+                            pass
+
+                        # --- Fall back to localStorage (legacy) ---
+                        if project_files_data is None:
+                            ls_json = js.localStorage.getItem(f"project_{project_id}_files")
+                            if ls_json:
+                                project_files_data = json.loads(ls_json)
+                    else:
+                        # Very old single-project key
+                        ls_json = js.localStorage.getItem('py5script_project')
+                        if ls_json:
+                            project_files_data = json.loads(ls_json)
+
+                    if project_files_data:
+                        for filename, content in project_files_data.items():
+                            try:
+                                if content.startswith('data:'):
+                                    # Binary asset — decode and write to Pyodide FS
+                                    if ',' in content:
+                                        _, headerless_data = content.split(',', 1)
+                                        binary_data = base64.b64decode(headerless_data)
+                                        with open(filename, 'wb') as f:
+                                            f.write(binary_data)
+                                        hydrated_assets[filename] = content
+                                else:
+                                    # Text file (module, shader, …) — write and register as data URL
+                                    with open(filename, 'w') as f:
+                                        f.write(content)
+                                    b64_text = base64.b64encode(content.encode('utf-8')).decode('utf-8')
+                                    hydrated_assets[filename] = f"data:text/plain;base64,{b64_text}"
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+                
+            # Pre-fetched sketch source (standalone+folder mode).
+            # Stored here so sketch() can use it directly without relying on Pyodide's FS.
+            sketch_source = ''
+
+            if is_standalone:
+                try:
+                    from pyodide.http import pyfetch
+
+                    # Pre-fetch main sketch file and keep content in a closure variable.
+                    # We also write to the FS so that module imports (P5Importer) can find it,
+                    # but sketch() reads from sketch_source to avoid any FS timing issues.
+                    try:
+                        resp = await pyfetch(base_path + 'sketch.py')
+                        if resp.ok:
+                            sketch_source = await resp.string()
+                            with open('sketch.py', 'w') as f:
+                                f.write(sketch_source)
+                    except Exception as e:
+                        print("Error fetching sketch.py:", e)
+
+                    for cfg in ["requirements.txt", "js_modules.txt"]:
+                        try:
+                            resp = await pyfetch(base_path + cfg)
+                            if resp.ok:
+                                with open(cfg, "w") as f:
+                                    f.write(await resp.string())
+                        except Exception:
+                            pass
+                except Exception as e:
+                    print("Error initiating standalone pyfetch:", e)
+            # -----------------------
+
+            # --- Package Installation (requirements.txt) ---
+            if os.path.exists("requirements.txt"):
+                try:
+                    # Ensure micropip is available
+                    try:
+                        import micropip
+                    except ImportError:
+                        # Attempt to load micropip via Pyodide JS API wrapper
+                        try:
+                            import pyodide_js
+                            await pyodide_js.loadPackage("micropip")
+                            import micropip
+                        except Exception as e:
+                             print(f"Error loading micropip: {e}")
+                             raise e
+
+                    with open("requirements.txt", "r") as f:
+                        packages = [line.strip() for line in f if line.strip() and not line.startswith('#')]
+                    
+                    if packages:
+                        print(f"Installing packages: {packages}...")
+                        await micropip.install(packages)
+                        print("Packages installed.")
+                except Exception as e:
+                    print(f"Error installing packages: {e}")
+                    # Post error but maybe continue
+                    msg = {"type": "error", "message": f"Failed to install requirements: {e}", "filename": "requirements.txt", "line": 0}
+                    js.window.parent.postMessage(to_js(msg, dict_converter=js.Object.fromEntries), "*")
+            # ---------------------------------------------
+
+            # --- JavaScript Module Loading (js_modules.txt) ---
+            # Allows users to import ES modules by adding a js_modules.txt file.
+            # Format: one entry per line —  url = alias
+            # Lines starting with # are comments. Example:
+            #
+            #   # Tone.js audio synthesis
+            #   https://cdn.jsdelivr.net/npm/tone@14/build/Tone.js = Tone
+            #   https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.js = Chart
+            #
+            # Each alias becomes available as a global in the sketch.
+            if os.path.exists("js_modules.txt"):
+                try:
+                    with open("js_modules.txt", "r") as f:
+                        lines = f.readlines()
+
+                    entries = []
+                    for line in lines:
+                        line = line.strip()
+                        if not line or line.startswith("#"):
+                            continue
+                        if "=" not in line:
+                            continue
+                        url, _, alias = line.partition("=")
+                        url = url.strip()
+                        alias = alias.strip()
+                        if url and alias:
+                            entries.append((url, alias))
+
+                    if entries:
+                        print(f"Loading JS modules: {[a for _, a in entries]}...")
+
+                    import builtins
+                    for url, alias in entries:
+                        try:
+                            mod = await js.eval(f"import('{url}')")
+                            globals()[alias] = mod
+                            setattr(builtins, alias, mod)
+                            print(f"JS module '{alias}' loaded from {url}")
+                        except Exception as mod_e:
+                            print(f"Error loading JS module '{alias}' from {url}: {mod_e}")
+                            msg = {"type": "error", "message": f"Failed to load JS module '{alias}': {mod_e}", "filename": "js_modules.txt", "line": 0}
+                            js.window.parent.postMessage(to_js(msg, dict_converter=js.Object.fromEntries), "*")
+
+                except Exception as e:
+                    print(f"Error reading js_modules.txt: {e}")
+                    msg = {"type": "error", "message": f"Failed to read js_modules.txt: {e}", "filename": "js_modules.txt", "line": 0}
+                    js.window.parent.postMessage(to_js(msg, dict_converter=js.Object.fromEntries), "*")
+            # -------------------------------------------------
+
+            # Asset Helper (Explicit URL resolution)
+            def asset(filename):
+                """
+                Returns the Data URL for a given asset filename if it exists.
+                Otherwise returns the filename itself (fallback).
+                Usage: p5.loadImage(asset('cat.png'))
+                """
+                if filename in hydrated_assets:
+                    return hydrated_assets[filename]
+                return filename
+            
+            # Expose to global scope for user scripts
+            import builtins
+            globals()['asset'] = asset
+            setattr(builtins, 'asset', asset)
+            
+            # Ensure open is builtins.open (defensive)
+            globals()['open'] = builtins.open
+
+            # --- Pyodide / JS interop helpers (available everywhere, no import needed) ---
+            from pyodide.ffi import to_js as _to_js, create_proxy as _create_proxy
+            import js as _js_mod
+
+            def js_array(iterable):
+                """Convert a Python list or tuple to a JavaScript Array."""
+                return _to_js(iterable)
+
+            def js_object(d):
+                """Convert a Python dict to a plain JavaScript object."""
+                return _to_js(d, dict_converter=_js_mod.Object.fromEntries)
+
+            # Inject into globals AND builtins so imported modules get them too
+            for _name, _val in [
+                ('to_js',        _to_js),
+                ('create_proxy', _create_proxy),
+                ('js_array',     js_array),
+                ('js_object',    js_object),
+            ]:
+                globals()[_name] = _val
+                setattr(builtins, _name, _val)
+            # -------------------------------------------------------------------------
+
+            # --- Hacks Loading (hacks.py) ---
+            try:
+                from pyodide.http import pyfetch
+                url = f"hacks.py?t={js.Date.now()}"
+                resp = await pyfetch(url)
+                if resp.ok:
+                    hacks_source = await resp.string()
+                    if hacks_source.strip():
+                        try:
+                            hacks_tree = ast.parse(hacks_source)
+                            user_defined_hacks = set()
+                            for node in hacks_tree.body:
+                                if isinstance(node, ast.FunctionDef):
+                                    user_defined_hacks.add(node.name)
+                                elif isinstance(node, ast.Assign):
+                                    for target in node.targets:
+                                        if isinstance(target, ast.Name):
+                                            user_defined_hacks.add(target.id)
+                                        elif isinstance(target, (ast.Tuple, ast.List)):
+                                            for elt in target.elts:
+                                                if isinstance(elt, ast.Name):
+                                                    user_defined_hacks.add(elt.id)
+
+                            transformer = P5Transformer(user_defined_hacks, case_mode)
+                            new_hacks_tree = transformer.visit(hacks_tree)
+                            ast.fix_missing_locations(new_hacks_tree)
+                            
+                            code_obj = compile(new_hacks_tree, filename="hacks.py", mode="exec")
+                            exec(code_obj, globals())
+                        except Exception as e:
+                            err_msg = f"{e.__class__.__name__}: {e}"
+                            if isinstance(e, SyntaxError):
+                                err_msg = f"{e.__class__.__name__}: {e.msg}"
+                            line_num = getattr(e, 'lineno', 0)
+                            msg = {"type": "error", "message": err_msg, "filename": "hacks.py", "line": line_num}
+                            js.window.parent.postMessage(_to_js(msg, dict_converter=js.Object.fromEntries), "*")
+            except Exception as e:
+                pass
+            # -------------------------------------------------------------------------
+
+            def sketch(p):
+                global P5
+                P5 = p
+                # Expose to JS for console.error interception
+                js.window.currentP5 = p
+                
+                # Inject P5 into builtins so imported modules can access it as 'P5'
+                import builtins
+                builtins.P5 = p
+                builtins.p5 = js.p5 # Global p5 class available everywhere  
+                
+                # Intercept load functions to use Data URLs if available
+                # This fixes p5.loadImage() failing to fetch local files
+                def create_asset_loader(original_loader, loader_name):
+                    def wrapper(*args, **kwargs):
+                        new_args = []
+                        for arg in args:
+                            if isinstance(arg, str):
+                                if arg in hydrated_assets:
+                                    new_args.append(hydrated_assets[arg])
+                                elif base_path and not arg.startswith(('http://', 'https://', '//', '/', 'data:')):
+                                    new_args.append(base_path + arg)
+                                else:
+                                    new_args.append(arg)
+                            else:
+                                new_args.append(arg)
+                        return original_loader(*new_args, **kwargs)
+                    return wrapper
+
+                # List of load functions to wrap
+                load_funcs = ['loadImage', 'loadJSON', 'loadStrings', 'loadTable', 'loadXML', 'loadBytes', 'loadModel', 'loadFont', 'loadSound', 'loadShader']
+                for name in load_funcs:
+                    if hasattr(p, name):
+                         original = getattr(p, name)
+                         setattr(p, name, create_proxy(create_asset_loader(original, name)))
+
+                # 1. Get Code & Params
+                raw_source = js.window.name
+                source = textwrap.dedent(raw_source)
+                
+                # Standalone Mode fallback: use pre-fetched content first (avoids FS timing issues),
+                # then try reading from disk (original standalone mode without folder param).
+                if not source.strip() and is_standalone:
+                    if sketch_source:
+                        source = sketch_source
+                    else:
+                        try:
+                            if os.path.exists("sketch.py"):
+                                with open("sketch.py", "r") as f:
+                                    source = f.read()
+                        except Exception:
+                            pass
+
+                if not source.strip(): 
+                    if is_standalone:
+                        print("Error: Could not find sketch.py on paths. Source is empty!")
+                    return
+                    
+
+                try:
+                    tree = ast.parse(source)
+                except Exception as e:
+                    # Captura erro de sintaxe
+                    err_msg = f"{e.__class__.__name__}: {e}"
+                    if isinstance(e, SyntaxError):
+                        err_msg = f"{e.__class__.__name__}: {e.msg}"
+                    
+                    line_num = getattr(e, 'lineno', 0)
+                    msg = {"type": "error", "message": err_msg, "filename": "sketch.py", "line": line_num}
+                    js.window.parent.postMessage(to_js(msg, dict_converter=js.Object.fromEntries), "*")
+                    return
+
+                # --- STATIC MODE ---
+                # Detect whether or not a setup function was included.
+                # If not, copy all the code to the body of a setup function automatically.
+                has_setup = False
+                for node in tree.body:
+                    if isinstance(node, ast.FunctionDef) and node.name == 'setup':
+                        has_setup = True
+                        break
+                
+                if not has_setup:
+                    source = "def setup():\n" + textwrap.indent(source, "    ")
+                    try:
+                        tree = ast.parse(source)
+                    except Exception as e:
+                        err_msg = f"{e.__class__.__name__}: {e}"
+                        if isinstance(e, SyntaxError):
+                            err_msg = f"{e.__class__.__name__}: {e.msg}"
+                        line_num = getattr(e, 'lineno', 0)
+                        if line_num > 0:
+                            line_num -= 1
+                        msg = {"type": "error", "message": err_msg, "filename": "sketch.py", "line": line_num}
+                        js.window.parent.postMessage(to_js(msg, dict_converter=js.Object.fromEntries), "*")
+                        return
+                # -------------------
+
+                # Collect user definitions
+                user_defined = set()
+                for node in tree.body:
+                    if isinstance(node, ast.FunctionDef):
+                        user_defined.add(node.name)
+                    elif isinstance(node, ast.Assign):
+                        for target in node.targets:
+                            if isinstance(target, ast.Name):
+                                user_defined.add(target.id)
+                            # Tuple unpacking? (a, b) = ...
+                            elif isinstance(target, ast.Tuple) or isinstance(target, ast.List):
+                                for elt in target.elts:
+                                    if isinstance(elt, ast.Name):
+                                        user_defined.add(elt.id)
+
+                # 2. Transform AST
+                transformer = P5Transformer(user_defined, case_mode)
+                new_tree = transformer.visit(tree)
+                ast.fix_missing_locations(new_tree)
+
+                # 3. Compile and Execute
+                try:
+                    code_obj = compile(new_tree, filename="sketch.py", mode="exec")
+                    exec(code_obj, globals())
+                except Exception as e:
+                    import traceback
+                    import os
+                    
+                    err_msg = f"{e.__class__.__name__}: {e}"
+                    line_num = 0
+                    err_filename = "sketch.py"
+
+                    if isinstance(e, SyntaxError):
+                         err_msg = f"{e.__class__.__name__}: {e.msg}"
+                         line_num = e.lineno
+                         err_filename = e.filename
+                    else:
+                        tb_list = traceback.extract_tb(e.__traceback__)
+                        # Find the last frame that is in a user file or sketch.py
+                        for frame in tb_list:
+                            if frame.filename == "sketch.py" or os.path.exists(frame.filename):
+                                err_filename = frame.filename
+                                line_num = frame.lineno
+                    
+                    if not has_setup and err_filename == "sketch.py" and line_num > 0:
+                        line_num -= 1
+
+                    msg = {"type": "error", "message": err_msg, "filename": err_filename, "line": line_num}
+                    js.window.parent.postMessage(to_js(msg, dict_converter=js.Object.fromEntries), "*")
+                    return
+                
+                # 4. Connect to p5
+                # List of p5.js event functions to map
+                p5_events = [
+                    'setup', 'draw', 'preload',
+                    'mousePressed', 'mouseReleased', 'mouseClicked', 'mouseMoved', 'mouseDragged', 'doubleClicked', 'mouseWheel',
+                    'keyPressed', 'keyReleased', 'keyTyped',
+                    'touchStarted', 'touchMoved', 'touchEnded',
+                    'deviceMoved', 'deviceTurned', 'deviceShaken',
+                    'windowResized'
+                ]
+                
+                import inspect
+                import traceback
+
+                def safe_wrapper(func):
+                    def wrapper(*args, **kwargs):
+                        try:
+                            return func(*args, **kwargs)
+                        except Exception:
+                            traceback.print_exc() 
+                            # Stop the sketch loop on error
+                            if P5:
+                                P5.noLoop()
+                    return wrapper
+
+                def create_arg_stripper(func):
+                    return lambda *args: func()
+
+                for event in p5_events:
+                    py_func = None
+                    
+                    # 1. Check for standard camelCase (mousePressed)
+                    if event in globals():
+                        py_func = globals()[event]
+                        
+                    # 2. Check for snake_case (mouse_pressed)
+                    else:
+                        snake_event = camel_to_snake(event)
+                        if snake_event != event and snake_event in globals():
+                            py_func = globals()[snake_event]
+                    
+                    if py_func:
+                        # Handle argument mismatch (e.g. mousePressed(e) vs mousePressed())
+                        if callable(py_func):
+                             try:
+                                 sig = inspect.signature(py_func)
+                                 params = sig.parameters
+                                 has_varargs = any(p.kind == p.VAR_POSITIONAL for p in params.values())
+                                 
+                                 if not has_varargs and len(params) == 0:
+                                      # Wrap to discard arguments
+                                      py_func = create_arg_stripper(py_func)
+                             except Exception as e:
+                                 pass
+
+                        # Wrap in error handler
+                        secure_func = safe_wrapper(py_func)
+                        setattr(p, event, create_proxy(secure_func))
+
+            proxy = create_proxy(sketch)
+            js.window.p5.new(proxy)
+
+        import asyncio
+        asyncio.ensure_future(entry_point())
+    </script>
+</body>
+</html>

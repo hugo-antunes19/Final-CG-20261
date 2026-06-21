@@ -821,7 +821,8 @@ def reset_fase_2():
 
 def setup():
     global prog, hud, W, H, overlay_div
-    P5.createCanvas(900, 600, P5.WEBGL)  
+    canvas = P5.createCanvas(900, 600, P5.WEBGL)
+    canvas.parent("game-container")
     P5.pixelDensity(1)                   
     W, H = P5.width, P5.height
     prog = P5.createShader(VERT, FRAG)   
